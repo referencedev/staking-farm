@@ -1,0 +1,23 @@
+[package]
+name = "staking-farm"
+version = "1.0.0"
+authors = ["referencedev <goi65io3903d@protonmail.com>"]
+edition = "2018"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+uint = { version = "0.9.0", default-features = false }
+near-sdk = { version = "4.0.0-pre.2" }
+
+[profile.release]
+codegen-units = 1
+# s = optimize for binary size ("z" would additionally turn off loop vectorization)
+opt-level = "z"
+# link time optimization
+lto = true
+debug = false
+panic = "abort"
+overflow-checks = true
