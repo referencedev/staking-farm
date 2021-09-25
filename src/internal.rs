@@ -1,5 +1,6 @@
 use crate::*;
 use near_sdk::log;
+use crate::stake::ext_self;
 
 impl StakingContract {
     /********************/
