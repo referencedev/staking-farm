@@ -147,11 +147,6 @@ impl StakingContract {
         self.total_staked_balance.into()
     }
 
-    /// Returns account ID of the staking pool owner.
-    pub fn get_owner_id(&self) -> AccountId {
-        self.owner_id.clone()
-    }
-
     /// Returns the current reward fee as a fraction.
     pub fn get_reward_fee_fraction(&self) -> RewardFeeFraction {
         self.reward_fee_fraction.clone()

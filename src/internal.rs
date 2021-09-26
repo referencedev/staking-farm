@@ -184,7 +184,7 @@ impl StakingContract {
     pub(crate) fn assert_owner(&self) {
         assert_eq!(
             env::predecessor_account_id(),
-            self.owner_id,
+            self.get_owner_id(),
             "Can only be called by the owner"
         );
     }
@@ -222,7 +222,7 @@ impl StakingContract {
             let num_shares = self.num_shares_from_staked_amount_rounded_down(owners_fee);
             if num_shares > 0 {
                 // Updating owner's inner account
-                let owner_id = self.owner_id.clone();
+                let owner_id = self.get_owner_id();
                 let mut account = self.internal_get_account(&owner_id);
                 account.stake_shares += num_shares;
                 self.internal_save_account(&owner_id, &account);

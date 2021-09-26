@@ -5,12 +5,13 @@ use near_sdk::{
     PublicKey,
 };
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
-use near_sdk::collections::UnorderedMap;
+use near_sdk::collections::{UnorderedMap, Vector};
 use near_sdk::json_types::U128;
 use near_sdk::serde::{Deserialize, Serialize};
 use uint::construct_uint;
 
 use crate::account::{Account, NumStakeShares};
+use crate::farm::Farm;
 
 mod internal;
 #[cfg(test)]
@@ -18,6 +19,8 @@ mod test_utils;
 mod owner;
 mod account;
 mod stake;
+mod token_receiver;
+mod farm;
 
 /// The amount of gas given to complete internal `on_stake_action` call.
 const ON_STAKE_ACTION_GAS: Gas = Gas(20_000_000_000_000);
@@ -31,6 +34,7 @@ const NO_DEPOSIT: Balance = 0;
 
 construct_uint! {
     /// 256-bit unsigned integer.
+    #[derive(BorshSerialize, BorshDeserialize)]
     pub struct U256(4);
 }
 
@@ -44,10 +48,6 @@ const NUM_EPOCHS_TO_UNLOCK: EpochHeight = 4;
 #[near_bindgen]
 #[derive(BorshDeserialize, BorshSerialize)]
 pub struct StakingContract {
-    /// The account ID of the owner who's running the staking validator node.
-    /// NOTE: This is different from the current account ID which is used as a validator account.
-    /// The owner of the staking pool can change staking public key and adjust reward fees.
-    pub owner_id: AccountId,
     /// The public key which is used for staking action. It's the public key of the validator node
     /// that validates on behalf of the pool.
     pub stake_public_key: PublicKey,
@@ -65,6 +65,8 @@ pub struct StakingContract {
     pub reward_fee_fraction: RewardFeeFraction,
     /// Persistent map from an account ID to the corresponding account.
     pub accounts: UnorderedMap<AccountId, Account>,
+    /// Farm tokens.
+    pub farms: Vector<Farm>,
     /// Whether the staking is paused.
     /// When paused, the account unstakes everything (stakes 0) and doesn't restake.
     /// It doesn't affect the staking shares or reward distribution.
@@ -128,7 +130,6 @@ impl StakingContract {
             "The staking pool shouldn't be staking at the initialization"
         );
         let mut this = Self {
-            owner_id,
             stake_public_key: stake_public_key.into(),
             last_epoch_height: env::epoch_height(),
             last_total_balance: account_balance,
@@ -136,8 +137,10 @@ impl StakingContract {
             total_stake_shares: NumStakeShares::from(total_staked_balance),
             reward_fee_fraction,
             accounts: UnorderedMap::new(b"u".to_vec()),
+            farms: Vector::new(b"v".to_vec()),
             paused: false,
         };
+        this.internal_set_owner(&owner_id);
         // Staking with the current pool to make sure the staking key is valid.
         this.internal_restake();
         this

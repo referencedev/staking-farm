@@ -1,7 +1,11 @@
+use std::collections::HashMap;
+
 use near_sdk::{AccountId, Balance, EpochHeight};
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::json_types::U128;
 use near_sdk::serde::{Deserialize, Serialize};
+
+use crate::U256;
 
 /// A type to distinguish between a balance and "stake" shares for better readability.
 pub type NumStakeShares = Balance;
@@ -20,6 +24,8 @@ pub struct Account {
     /// The minimum epoch height when the withdrawn is allowed.
     /// This changes after unstaking action, because the amount is still locked for 3 epochs.
     pub unstaked_available_epoch_height: EpochHeight,
+    /// Last claimed
+    pub user_rps: HashMap<u64, U256>,
 }
 
 /// Represents an account structure readable by humans.
@@ -41,6 +47,7 @@ impl Default for Account {
             unstaked: 0,
             stake_shares: 0,
             unstaked_available_epoch_height: 0,
+            user_rps: HashMap::new(),
         }
     }
 }
