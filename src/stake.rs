@@ -1,5 +1,5 @@
-use crate::*;
 use crate::account::HumanReadableAccount;
+use crate::*;
 
 /// Interface for the contract itself.
 #[ext_contract(ext_self)]
@@ -10,6 +10,14 @@ pub trait SelfContract {
     /// follow withdraw calls might fail. To mitigate this, the contract will issue a new unstaking
     /// action in case of the failure of the first staking action.
     fn on_stake_action(&mut self);
+
+    /// Check if reward withdrawal succeeded and if it failed, refund reward back to the user.
+    fn callback_post_withdraw_reward(
+        mut self,
+        token_id: AccountId,
+        sender_id: AccountId,
+        amount: U128,
+    );
 }
 
 #[near_bindgen]

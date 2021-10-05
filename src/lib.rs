@@ -1,26 +1,26 @@
 use std::convert::TryInto;
 
-use near_sdk::{
-    AccountId, Balance, env, EpochHeight, ext_contract, Gas, near_bindgen, Promise, PromiseResult,
-    PublicKey,
-};
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::collections::{UnorderedMap, Vector};
 use near_sdk::json_types::U128;
 use near_sdk::serde::{Deserialize, Serialize};
+use near_sdk::{
+    env, ext_contract, near_bindgen, AccountId, Balance, EpochHeight, Gas, Promise, PromiseResult,
+    PublicKey,
+};
 use uint::construct_uint;
 
 use crate::account::{Account, NumStakeShares};
 use crate::farm::Farm;
 
+mod account;
+mod farm;
 mod internal;
+mod owner;
+mod stake;
 #[cfg(test)]
 mod test_utils;
-mod owner;
-mod account;
-mod stake;
 mod token_receiver;
-mod farm;
 
 /// The amount of gas given to complete internal `on_stake_action` call.
 const ON_STAKE_ACTION_GAS: Gas = Gas(20_000_000_000_000);
@@ -37,7 +37,6 @@ construct_uint! {
     #[derive(BorshSerialize, BorshDeserialize)]
     pub struct U256(4);
 }
-
 
 /// The number of epochs required for the locked balance to become unlocked.
 /// NOTE: The actual number of epochs when the funds are unlocked is 3. But there is a corner case
@@ -152,107 +151,21 @@ impl StakingContract {
             self.internal_restake();
         }
     }
-
 }
 
 #[cfg(test)]
 mod tests {
-    use near_sdk::{testing_env, VMContext};
     use near_sdk::mock::VmAction;
-    use near_sdk::test_utils::{
-        get_created_receipts, testing_env_with_promise_results, VMContextBuilder,
-    };
+    use near_sdk::serde_json;
+    use near_sdk::test_utils::{get_created_receipts, testing_env_with_promise_results};
 
+    use crate::test_utils::tests::*;
     use crate::test_utils::*;
 
     use super::*;
-
-    struct Emulator {
-        pub contract: StakingContract,
-        pub epoch_height: EpochHeight,
-        pub amount: Balance,
-        pub locked_amount: Balance,
-        last_total_staked_balance: Balance,
-        last_total_stake_shares: Balance,
-        context: VMContext,
-    }
-
-    fn zero_fee() -> RewardFeeFraction {
-        RewardFeeFraction {
-            numerator: 0,
-            denominator: 1,
-        }
-    }
-
-    impl Emulator {
-        pub fn new(
-            owner: AccountId,
-            stake_public_key: PublicKey,
-            reward_fee_fraction: RewardFeeFraction,
-        ) -> Self {
-            let context = VMContextBuilder::new()
-                .current_account_id(owner.clone())
-                .account_balance(ntoy(30))
-                .build();
-            testing_env!(context.clone());
-            let contract = StakingContract::new(owner, stake_public_key, reward_fee_fraction);
-            let last_total_staked_balance = contract.total_staked_balance;
-            let last_total_stake_shares = contract.total_stake_shares;
-            Emulator {
-                contract,
-                epoch_height: 0,
-                amount: ntoy(30),
-                locked_amount: 0,
-                last_total_staked_balance,
-                last_total_stake_shares,
-                context,
-            }
-        }
-
-        fn verify_stake_price_increase_guarantee(&mut self) {
-            let total_staked_balance = self.contract.total_staked_balance;
-            let total_stake_shares = self.contract.total_stake_shares;
-            assert!(
-                U256::from(total_staked_balance) * U256::from(self.last_total_stake_shares)
-                    >= U256::from(self.last_total_staked_balance) * U256::from(total_stake_shares),
-                "Price increase guarantee was violated."
-            );
-            self.last_total_staked_balance = total_staked_balance;
-            self.last_total_stake_shares = total_stake_shares;
-        }
-
-        pub fn update_context(&mut self, predecessor_account_id: AccountId, deposit: Balance) {
-            self.verify_stake_price_increase_guarantee();
-            self.context = VMContextBuilder::new()
-                .current_account_id(staking())
-                .predecessor_account_id(predecessor_account_id.clone())
-                .signer_account_id(predecessor_account_id)
-                .attached_deposit(deposit)
-                .account_balance(self.amount)
-                .account_locked_balance(self.locked_amount)
-                .epoch_height(self.epoch_height)
-                .build();
-            testing_env!(self.context.clone());
-            println!(
-                "Epoch: {}, Deposit: {}, amount: {}, locked_amount: {}",
-                self.epoch_height, deposit, self.amount, self.locked_amount
-            );
-        }
-
-        pub fn simulate_stake_call(&mut self) {
-            let total_stake = self.contract.total_staked_balance;
-            // Stake action
-            self.amount = self.amount + self.locked_amount - total_stake;
-            self.locked_amount = total_stake;
-            // Second function call action
-            self.update_context(staking(), 0);
-        }
-
-        pub fn skip_epochs(&mut self, num: EpochHeight) {
-            self.epoch_height += num;
-            self.locked_amount = (self.locked_amount * (100 + u128::from(num))) / 100;
-        }
-    }
+    use crate::token_receiver::FarmingDetails;
+    use near_contract_standards::fungible_token::receiver::FungibleTokenReceiver;
+    use near_sdk::json_types::U64;
 
     #[test]
     fn test_restake_fail() {
@@ -589,5 +502,72 @@ mod tests {
             emulator.simulate_stake_call();
             remaining -= amount;
         }
+    }
+
+    #[test]
+    fn test_farm() {
+        let mut emulator = Emulator::new(
+            owner(),
+            "KuTCtARNzxZQ3YvXDeLjx83FDqxv2SdQTSbiq876zR7"
+                .parse()
+                .unwrap(),
+            zero_fee(),
+        );
+        emulator.update_context(bob(), 0);
+        emulator.contract.ft_on_transfer(
+            alice(),
+            U128(ntoy(100)),
+            serde_json::to_string(&FarmingDetails {
+                name: "test".to_string(),
+                start_date: U64(0),
+                end_date: U64(ONE_EPOCH_TS * 4),
+            })
+            .unwrap(),
+        );
+
+        let initial_balance = ntoy(1_000_000);
+        emulator.update_context(alice(), initial_balance);
+        emulator.contract.deposit();
+        emulator.amount += initial_balance;
+        emulator.update_context(alice(), 0);
+        emulator.contract.stake(initial_balance.into());
+        emulator.simulate_stake_call();
+
+        let farm = emulator.contract.get_farm(0);
+        assert_eq!(farm.name, "test".to_string());
+        assert_eq!(farm.token_id, bob());
+        assert_eq!(farm.start_date.0, 0);
+        assert_eq!(farm.end_date.0, ONE_EPOCH_TS * 4);
+        assert_eq!(farm.amount.0, ntoy(100));
+
+        assert_eq!(emulator.contract.get_unclaimed_reward(alice(), 0).0, 0);
+
+        emulator.skip_epochs(1);
+        emulator.update_context(alice(), 0);
+
+        // First user got 1/4 of the rewards after 1/4 of the time.
+        assert!(almost_equal(
+            emulator.contract.get_unclaimed_reward(alice(), 0).0,
+            ntoy(25),
+            ntoy(1) / 100
+        ));
+
+        // Adding second user.
+        let charlie_balance = ntoy(1_000_000);
+        emulator.update_context(charlie(), charlie_balance);
+        emulator.contract.deposit();
+        emulator.amount += charlie_balance;
+        emulator.update_context(charlie(), 0);
+        emulator.contract.stake(charlie_balance.into());
+        emulator.simulate_stake_call();
+
+        emulator.skip_epochs(1);
+        emulator.update_context(alice(), 0);
+        println!(">{} ", emulator.contract.get_unclaimed_reward(alice(), 0).0);
+        assert!(almost_equal(
+            emulator.contract.get_unclaimed_reward(alice(), 0).0,
+            ntoy(37),
+            ntoy(1) / 100
+        ));
     }
 }

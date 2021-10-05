@@ -1,10 +1,19 @@
+use near_contract_standards::fungible_token::core_impl::ext_fungible_token;
+use near_sdk::json_types::U64;
+use near_sdk::{PromiseOrValue, Timestamp};
+
+use crate::stake::ext_self;
 use crate::*;
-use near_sdk::Timestamp;
 
 const SESSION_INTERVAL: u64 = 1_000_000_000;
 const DENOMINATOR: u128 = 1_000_000_000_000_000_000_000_000;
 
-#[derive(BorshSerialize, BorshDeserialize, Clone)]
+/// Amount of gas for fungible token transfers.
+pub const GAS_FOR_FT_TRANSFER: Gas = Gas(10_000_000_000_000);
+/// hotfix_insuffient_gas_for_mft_resolve_transfer, increase from 5T to 20T
+pub const GAS_FOR_RESOLVE_TRANSFER: Gas = Gas(20_000_000_000_000);
+
+#[derive(BorshSerialize, BorshDeserialize, Clone, Debug)]
 pub struct RewardDistribution {
     pub undistributed: Balance,
     pub unclaimed: Balance,
@@ -14,6 +23,7 @@ pub struct RewardDistribution {
 
 #[derive(BorshSerialize, BorshDeserialize)]
 pub struct Farm {
+    name: String,
     token_id: AccountId,
     amount: Balance,
     start_date: Timestamp,
@@ -21,11 +31,51 @@ pub struct Farm {
     last_distribution: RewardDistribution,
 }
 
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(crate = "near_sdk::serde")]
+pub struct HumanReadableFarm {
+    pub name: String,
+    pub token_id: AccountId,
+    pub amount: U128,
+    pub start_date: U64,
+    pub end_date: U64,
+}
+
+impl From<Farm> for HumanReadableFarm {
+    fn from(farm: Farm) -> Self {
+        HumanReadableFarm {
+            name: farm.name,
+            token_id: farm.token_id,
+            amount: U128(farm.amount),
+            start_date: U64(farm.start_date),
+            end_date: U64(farm.end_date),
+        }
+    }
+}
+
 impl StakingContract {
-    pub(crate) fn internal_deposit_farm_tokens(&mut self, token_id: &AccountId, amount: Balance, start_date: Timestamp, end_date: Timestamp) {
+    pub(crate) fn internal_deposit_farm_tokens(
+        &mut self,
+        token_id: &AccountId,
+        name: String,
+        amount: Balance,
+        start_date: Timestamp,
+        end_date: Timestamp,
+    ) {
+        assert!(end_date > start_date, "ERR_FARM_DATE");
+        assert!(amount > 0, "ERR_FARM_AMOUNT");
         self.farms.push(&Farm {
-            token_id: token_id.clone(), amount, start_date, end_date,
-            last_distribution: RewardDistribution { undistributed: amount, unclaimed: 0, rps: U256::zero(), reward_round: 0 }
+            name,
+            token_id: token_id.clone(),
+            amount,
+            start_date,
+            end_date,
+            last_distribution: RewardDistribution {
+                undistributed: amount,
+                unclaimed: 0,
+                rps: U256::zero(),
+                reward_round: 0,
+            },
         });
     }
 
@@ -33,8 +83,12 @@ impl StakingContract {
         self.farms.get(farm_id).expect("ERR_NO_FARM")
     }
 
-    fn internal_calculate_distribution(&self, farm: &Farm, total_staked: Balance) -> Option<RewardDistribution> {
-        if farm.start_date < env::block_timestamp() {
+    fn internal_calculate_distribution(
+        &self,
+        farm: &Farm,
+        total_staked: Balance,
+    ) -> Option<RewardDistribution> {
+        if farm.start_date > env::block_timestamp() {
             // Farm hasn't started.
             return None;
         }
@@ -44,8 +98,16 @@ impl StakingContract {
             return Some(distribution);
         }
         distribution.reward_round = (env::block_timestamp() - farm.start_date) / SESSION_INTERVAL;
-        let reward_per_session = farm.amount * (farm.end_date - farm.start_date) as u128 / SESSION_INTERVAL as u128;
-        let mut reward_added = (distribution.reward_round - farm.last_distribution.reward_round) as u128 * reward_per_session;
+        let reward_per_session =
+            farm.amount / (farm.end_date - farm.start_date) as u128 * SESSION_INTERVAL as u128;
+        println!(
+            "{} {}",
+            (farm.end_date - farm.start_date) / SESSION_INTERVAL,
+            reward_per_session
+        );
+        let mut reward_added = (distribution.reward_round - farm.last_distribution.reward_round)
+            as u128
+            * reward_per_session;
         if farm.last_distribution.undistributed < reward_added {
             // Last step when the last tokens are getting distributed.
             reward_added = farm.last_distribution.undistributed;
@@ -58,27 +120,58 @@ impl StakingContract {
         }
         distribution.unclaimed += reward_added;
         distribution.undistributed -= reward_added;
-
         if total_staked == 0 {
             distribution.rps = U256::zero();
         } else {
-            distribution.rps = farm.last_distribution.rps + U256::from(reward_added * DENOMINATOR / total_staked);
+            distribution.rps = farm.last_distribution.rps
+                + U256::from(reward_added) * U256::from(DENOMINATOR) / U256::from(total_staked);
         }
+
+        println!(
+            "{} distirbution: {:?}, last_distribution: {:?}, reward_added: {}, total staked: {}",
+            env::block_timestamp(),
+            distribution,
+            farm.last_distribution,
+            reward_added,
+            total_staked
+        );
         Some(distribution)
     }
 
-     fn internal_unclaimed_balance(&self, account: &Account, farm_id: u64, farm: &Farm) -> (U256, Balance) {
-         let user_rps = account.user_rps.get(&farm_id).cloned().unwrap_or(U256::zero());
-         if let Some(distribution) = self.internal_calculate_distribution(&farm, self.total_stake_shares) {
-             (farm.last_distribution.rps, (U256::from(account.stake_shares) * (distribution.rps - user_rps) / DENOMINATOR).as_u128())
-         } else {
-             (U256::zero(), 0)
-         }
-     }
+    fn internal_unclaimed_balance(
+        &self,
+        account: &Account,
+        farm_id: u64,
+        farm: &Farm,
+    ) -> (U256, Balance) {
+        let user_rps = account
+            .user_rps
+            .get(&farm_id)
+            .cloned()
+            .unwrap_or(U256::zero());
+        if let Some(distribution) =
+            self.internal_calculate_distribution(&farm, self.total_stake_shares)
+        {
+            println!(
+                "user's share: {}, reward: {}",
+                account.stake_shares,
+                U256::from(account.stake_shares) * (distribution.rps - user_rps) / DENOMINATOR
+            );
+            (
+                farm.last_distribution.rps,
+                (U256::from(account.stake_shares) * (distribution.rps - user_rps) / DENOMINATOR)
+                    .as_u128(),
+            )
+        } else {
+            (U256::zero(), 0)
+        }
+    }
 
     fn internal_distribute(&mut self, farm_id: u64) {
         let mut farm = self.internal_get_farm(farm_id);
-        if let Some(distribution) = self.internal_calculate_distribution(&farm, self.total_stake_shares) {
+        if let Some(distribution) =
+            self.internal_calculate_distribution(&farm, self.total_stake_shares)
+        {
             if distribution.reward_round != farm.last_distribution.reward_round {
                 farm.last_distribution = distribution;
             }
@@ -86,15 +179,40 @@ impl StakingContract {
         }
     }
 
-    fn internal_claim_reward(&mut self, account_id: &AccountId, farm_id: u64) {
-        let farm = self.internal_get_farm(farm_id);
+    fn internal_claim_reward(
+        &mut self,
+        account_id: &AccountId,
+        farm_id: u64,
+    ) -> PromiseOrValue<()> {
         let mut account = self.internal_get_account(account_id);
-        let (new_user_rps, claim_amount) = self.internal_unclaimed_balance(&account, farm_id, &farm);
+        self.internal_distribute(farm_id);
+        let farm = self.internal_get_farm(farm_id);
+        let (new_user_rps, claim_amount) =
+            self.internal_unclaimed_balance(&account, farm_id, &farm);
         account.user_rps.insert(farm_id, new_user_rps);
-        if claim_amount > 0 {
-            // TODO: send the tokens to the user.
-        }
         self.accounts.insert(account_id, &account);
+        if claim_amount > 0 {
+            PromiseOrValue::Promise(
+                ext_fungible_token::ft_transfer(
+                    account_id.clone(),
+                    U128(claim_amount),
+                    None,
+                    farm.token_id.clone(),
+                    1,
+                    GAS_FOR_FT_TRANSFER,
+                )
+                .then(ext_self::callback_post_withdraw_reward(
+                    farm.token_id,
+                    account_id.clone(),
+                    U128(claim_amount),
+                    env::current_account_id(),
+                    0,
+                    GAS_FOR_RESOLVE_TRANSFER,
+                )),
+            )
+        } else {
+            PromiseOrValue::Value(())
+        }
     }
 }
 
@@ -102,6 +220,24 @@ impl StakingContract {
 impl StakingContract {
     /// Claim tokens from the given farm for the caller.
     pub fn claim(&mut self, farm_id: u64) {
+        self.internal_claim_reward(&env::predecessor_account_id(), farm_id);
+    }
 
+    pub fn get_farms(&self, from_index: u64, limit: u64) -> Vec<HumanReadableFarm> {
+        (from_index..std::cmp::min(from_index + limit, self.farms.len()))
+            .map(|index| self.farms.get(index).unwrap().into())
+            .collect()
+    }
+
+    pub fn get_farm(&self, farm_id: u64) -> HumanReadableFarm {
+        self.farms.get(farm_id).expect("ERR_NO_FARM").into()
+    }
+
+    pub fn get_unclaimed_reward(&self, account_id: AccountId, farm_id: u64) -> U128 {
+        let account = self.accounts.get(&account_id).expect("ERR_NO_ACCOUNT");
+        let farm = self.farms.get(farm_id).expect("ERR_NO_FARM");
+        let (_rps, reward) = self.internal_unclaimed_balance(&account, farm_id, &farm);
+        println!("{:?} {}", _rps, reward);
+        U128(reward)
     }
 }
