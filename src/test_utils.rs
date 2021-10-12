@@ -144,11 +144,21 @@ pub mod tests {
             self.update_context(staking(), 0);
         }
 
+        pub fn deposit_and_stake(&mut self, account: AccountId, amount: Balance) {
+            self.update_context(account.clone(), amount);
+            self.contract.deposit();
+            self.amount += amount;
+            self.update_context(account, 0);
+            self.contract.stake(U128(amount));
+            self.simulate_stake_call();
+        }
+
         pub fn skip_epochs(&mut self, num: EpochHeight) {
             self.epoch_height += num;
             self.block_index += num * 12 * 60 * 60;
             self.block_timestamp += num * ONE_EPOCH_TS;
             self.locked_amount = (self.locked_amount * (100 + u128::from(num))) / 100;
+            self.update_context(staking(), 0);
         }
     }
 }

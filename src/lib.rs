@@ -525,13 +525,7 @@ mod tests {
             .unwrap(),
         );
 
-        let initial_balance = ntoy(1_000_000);
-        emulator.update_context(alice(), initial_balance);
-        emulator.contract.deposit();
-        emulator.amount += initial_balance;
-        emulator.update_context(alice(), 0);
-        emulator.contract.stake(initial_balance.into());
-        emulator.simulate_stake_call();
+        emulator.deposit_and_stake(alice(), ntoy(1_000_000));
 
         let farm = emulator.contract.get_farm(0);
         assert_eq!(farm.name, "test".to_string());
@@ -553,21 +547,40 @@ mod tests {
         ));
 
         // Adding second user.
-        let charlie_balance = ntoy(1_000_000);
-        emulator.update_context(charlie(), charlie_balance);
-        emulator.contract.deposit();
-        emulator.amount += charlie_balance;
-        emulator.update_context(charlie(), 0);
-        emulator.contract.stake(charlie_balance.into());
-        emulator.simulate_stake_call();
+        emulator.deposit_and_stake(charlie(), ntoy(1_000_000));
 
         emulator.skip_epochs(1);
-        emulator.update_context(alice(), 0);
-        println!(">{} ", emulator.contract.get_unclaimed_reward(alice(), 0).0);
         assert!(almost_equal(
             emulator.contract.get_unclaimed_reward(alice(), 0).0,
-            ntoy(37),
+            ntoy(375612) / 10000,
             ntoy(1) / 100
         ));
+        let charlie_farmed = emulator.contract.get_unclaimed_reward(charlie(), 0).0;
+        assert!(almost_equal(
+            charlie_farmed,
+            ntoy(124388) / 10000,
+            ntoy(1) / 100
+        ));
+
+        emulator.deposit_and_stake(charlie(), ntoy(1_000_000));
+
+        // Amount is still the same after depositing more without incrementing time.
+        assert_eq!(
+            emulator.contract.get_unclaimed_reward(charlie(), 0).0,
+            charlie_farmed
+        );
+
+        emulator.skip_epochs(1);
+        assert!(almost_equal(
+            emulator.contract.get_unclaimed_reward(charlie(), 0).0,
+            charlie_farmed + ntoy(165834) / 10000,
+            ntoy(1) / 100,
+        ));
+
+        emulator.update_context(alice(), 0);
+        emulator
+            .contract
+            .claim(bob(), emulator.contract.get_unclaimed_reward(alice(), 0));
+        assert_eq!(emulator.contract.get_unclaimed_reward(alice(), 0).0, 0);
     }
 }

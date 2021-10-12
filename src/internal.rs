@@ -1,6 +1,6 @@
+use crate::stake::ext_self;
 use crate::*;
 use near_sdk::log;
-use crate::stake::ext_self;
 
 impl StakingContract {
     /********************/
@@ -73,6 +73,9 @@ impl StakingContract {
         let account_id = env::predecessor_account_id();
         let mut account = self.internal_get_account(&account_id);
 
+        // Distribute rewards from all the farms for the given user.
+        self.internal_distribute_all_rewards(&mut account);
+
         // Calculate the number of "stake" shares that the account will receive for staking the
         // given amount.
         let num_shares = self.num_shares_from_staked_amount_rounded_down(amount);
@@ -107,7 +110,7 @@ impl StakingContract {
 
         log!(
             "@{} staking {}. Received {} new staking shares. Total {} unstaked balance and {} \
-                staking shares",
+             staking shares",
             account_id,
             charge_amount,
             num_shares,
@@ -126,6 +129,9 @@ impl StakingContract {
 
         let account_id = env::predecessor_account_id();
         let mut account = self.internal_get_account(&account_id);
+
+        // Distribute rewards from all the farms for the given user.
+        self.internal_distribute_all_rewards(&mut account);
 
         assert!(
             self.total_staked_balance > 0,
@@ -166,7 +172,7 @@ impl StakingContract {
 
         log!(
             "@{} unstaking {}. Spent {} staking shares. Total {} unstaked balance and {} \
-                staking shares",
+             staking shares",
             account_id,
             receive_amount,
             num_shares,
@@ -235,7 +241,7 @@ impl StakingContract {
 
             log!(
                 "Epoch {}: Contract received total rewards of {} tokens. New total staked balance \
-                    is {}. Total number of shares {}",
+                 is {}. Total number of shares {}",
                 epoch_height,
                 total_reward,
                 self.total_staked_balance,
@@ -269,7 +275,7 @@ impl StakingContract {
         );
         (U256::from(self.total_stake_shares) * U256::from(amount)
             / U256::from(self.total_staked_balance))
-            .as_u128()
+        .as_u128()
     }
 
     /// Returns the number of "stake" shares rounded up corresponding to the given staked balance
@@ -287,7 +293,7 @@ impl StakingContract {
         ((U256::from(self.total_stake_shares) * U256::from(amount)
             + U256::from(self.total_staked_balance - 1))
             / U256::from(self.total_staked_balance))
-            .as_u128()
+        .as_u128()
     }
 
     /// Returns the staked amount rounded down corresponding to the given number of "stake" shares.
@@ -301,7 +307,7 @@ impl StakingContract {
         );
         (U256::from(self.total_staked_balance) * U256::from(num_shares)
             / U256::from(self.total_stake_shares))
-            .as_u128()
+        .as_u128()
     }
 
     /// Returns the staked amount rounded up corresponding to the given number of "stake" shares.
@@ -318,7 +324,7 @@ impl StakingContract {
         ((U256::from(self.total_staked_balance) * U256::from(num_shares)
             + U256::from(self.total_stake_shares - 1))
             / U256::from(self.total_stake_shares))
-            .as_u128()
+        .as_u128()
     }
 
     /// Inner method to get the given account or a new default value account.
