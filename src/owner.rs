@@ -74,4 +74,20 @@ impl StakingContract {
         self.paused = false;
         self.internal_restake();
     }
+
+    /// Add authorized user to the current contract.
+    pub fn add_authorized_user(&mut self, account_id: AccountId) {
+        self.assert_owner();
+        self.authorized_users.insert(account_id);
+    }
+
+    /// Remove authorized user from the current contract.
+    pub fn remove_authorized_user(&mut self, account_id: AccountId) {
+        self.assert_owner();
+        self.authorized_users.remove(&account_id);
+    }
+
+    pub fn get_authorized_users(&self) -> Vec<AccountId> {
+        self.authorized_users.iter().cloned().collect()
+    }
 }

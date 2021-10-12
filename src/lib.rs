@@ -12,6 +12,7 @@ use uint::construct_uint;
 
 use crate::account::{Account, NumStakeShares};
 use crate::farm::Farm;
+use std::collections::HashSet;
 
 mod account;
 mod farm;
@@ -72,6 +73,10 @@ pub struct StakingContract {
     /// Pausing is useful for node maintenance. Only the owner can pause and resume staking.
     /// The contract is not paused by default.
     pub paused: bool,
+    /// Authorized users, allowed to add farms.
+    /// This is done to prevent farm spam with random tokens.
+    /// Should not be a large number.
+    pub authorized_users: HashSet<AccountId>,
 }
 
 impl Default for StakingContract {
@@ -138,6 +143,7 @@ impl StakingContract {
             accounts: UnorderedMap::new(b"u".to_vec()),
             farms: Vector::new(b"v".to_vec()),
             paused: false,
+            authorized_users: HashSet::new(),
         };
         this.internal_set_owner(&owner_id);
         // Staking with the current pool to make sure the staking key is valid.
@@ -515,7 +521,7 @@ mod tests {
         );
         emulator.update_context(bob(), 0);
         emulator.contract.ft_on_transfer(
-            alice(),
+            owner(),
             U128(ntoy(100)),
             serde_json::to_string(&FarmingDetails {
                 name: "test".to_string(),
