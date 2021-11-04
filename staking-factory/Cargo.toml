@@ -1,0 +1,14 @@
+[package]
+name = "staking-factory"
+version = "1.0.0"
+authors = ["referencedev <goi65io3903d@protonmail.com>"]
+edition = "2018"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+uint = { version = "0.9.0", default-features = false }
+near-sdk = { version = "4.0.0-pre.2", features = ["unstable"]  }
+near-contract-standards = "4.0.0-pre.2"

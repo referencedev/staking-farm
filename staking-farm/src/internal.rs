@@ -186,15 +186,6 @@ impl StakingContract {
         );
     }
 
-    /// Asserts that the method was called by the owner.
-    pub(crate) fn assert_owner(&self) {
-        assert_eq!(
-            env::predecessor_account_id(),
-            self.get_owner_id(),
-            "Can only be called by the owner"
-        );
-    }
-
     /// Distributes rewards after the new epoch. It's automatically called before every action.
     /// Returns true if the current epoch height is different from the last epoch height.
     pub(crate) fn internal_ping(&mut self) -> bool {
@@ -228,7 +219,7 @@ impl StakingContract {
             let num_shares = self.num_shares_from_staked_amount_rounded_down(owners_fee);
             if num_shares > 0 {
                 // Updating owner's inner account
-                let owner_id = self.get_owner_id();
+                let owner_id = StakingContract::get_owner_id();
                 let mut account = self.internal_get_account(&owner_id);
                 account.stake_shares += num_shares;
                 self.internal_save_account(&owner_id, &account);

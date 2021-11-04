@@ -185,19 +185,16 @@ impl StakingContract {
 #[near_bindgen]
 impl StakingContract {
     /// Claim given tokens for given account.
-    pub fn claim(&mut self, token_id: AccountId, claim_amount: U128) -> Promise {
+    /// TODO: add alternative to predecessor for claiming.
+    pub fn claim(&mut self, token_id: AccountId) -> Promise {
         let account_id = env::predecessor_account_id();
         let mut account = self.accounts.get(&account_id).expect("ERR_NO_ACCOUNT");
         self.internal_distribute_all_rewards(&mut account);
-        let prev_amount = *account.amounts.get(&token_id).unwrap_or(&0);
-        assert!(prev_amount >= claim_amount.0, "ERR_NOT_ENOUGH_FUNDS");
-        account
-            .amounts
-            .insert(token_id.clone(), prev_amount - claim_amount.0);
+        let amount = account.amounts.remove(&token_id).unwrap_or(0);
         self.accounts.insert(&account_id, &account);
         ext_fungible_token::ft_transfer(
             account_id.clone(),
-            claim_amount,
+            U128(amount),
             None,
             token_id.clone(),
             1,
@@ -206,7 +203,7 @@ impl StakingContract {
         .then(ext_self::callback_post_withdraw_reward(
             token_id,
             account_id.clone(),
-            claim_amount,
+            U128(amount),
             env::current_account_id(),
             0,
             GAS_FOR_RESOLVE_TRANSFER,

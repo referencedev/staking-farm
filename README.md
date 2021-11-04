@@ -21,4 +21,24 @@ Farm contains next fields:
  - start_date: Timestamp,
  - end_date: Timestamp,
  - last_distribution: RewardDistribution,
- 
+
+## Upgradability
+
+Staking Farm contract supports upgradability from the specific factory contract.
+This is done to ensure that both contract owner and general community agree on the contract upgrade before it happens.
+
+The procedure for upgrades is as follows:
+ - Staking contract has the `factory_id` specified. This `factory_id` should be governed by the users or Foundation that users trust. 
+ - Factory contract contains whitelisted set of contracts, addressed by hash.
+ - Contract owner calls `upgrade(contract_hash)` method, which loads contract bytecode from `factory_id` and upgrade itself in-place.
+
+To avoid potential issues with state serialization failures due to upgrades, the owner information is stored outside of the STATE storage.
+This ensures that if new contracts has similar `upgrade` method that doesn't use state, even if contract got into wrong state after upgrade it is resolvable.
+
+----
+
+Corner cases:
+ - limit number of active farms. remove non-active farms
+ - staking from lockup for gas
+ - upgrading from factory via hash
+ - claiming to different predecessor with lockup (metapool)
