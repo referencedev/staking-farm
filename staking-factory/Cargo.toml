@@ -10,5 +10,13 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 uint = { version = "0.9.0", default-features = false }
-near-sdk = { version = "4.0.0-pre.2", features = ["unstable"]  }
-near-contract-standards = "4.0.0-pre.2"
+near-sdk = { version = "4.0.0-pre.4", features = ["unstable"]  }
+near-contract-standards = "4.0.0-pre.4"
+
+[dev-dependencies]
+lazy_static = "1.4.0"
+quickcheck = "0.9"
+quickcheck_macros = "0.9"
+log = "0.4"
+env_logger = { version = "0.7.1", default-features = false }
+near-sdk-sim = "4.0.0-pre.4"

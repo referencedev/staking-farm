@@ -2,9 +2,10 @@ use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::collections::UnorderedSet;
 use near_sdk::json_types::{Base58CryptoHash, U128};
 use near_sdk::serde::{Deserialize, Serialize};
+use near_sdk::serde_json::json;
 use near_sdk::{
     assert_self, env, ext_contract, is_promise_success, log, near_bindgen, sys, AccountId, Balance,
-    CryptoHash, Gas, Promise, PromiseOrValue, PublicKey,
+    CryptoHash, PanicOnDefault, Promise, PromiseOrValue, PublicKey,
 };
 
 /// The 30 NEAR tokens required for the storage of the staking pool.
@@ -12,6 +13,9 @@ const MIN_ATTACHED_BALANCE: Balance = 30_000_000_000_000_000_000_000_000;
 
 const NEW_METHOD_NAME: &str = "new";
 const ON_STAKING_POOL_CREATE: &str = "on_staking_pool_create";
+
+/// There is no deposit balance attached.
+const NO_DEPOSIT: Balance = 0;
 
 pub mod gas {
     use near_sdk::Gas;
@@ -32,11 +36,8 @@ pub mod gas {
     pub const WHITELIST_STAKING_POOL: Gas = BASE;
 }
 
-/// There is no deposit balance attached.
-const NO_DEPOSIT: Balance = 0;
-
 #[near_bindgen]
-#[derive(BorshDeserialize, BorshSerialize)]
+#[derive(BorshDeserialize, BorshSerialize, PanicOnDefault)]
 pub struct StakingPoolFactory {
     /// Account ID that can upload new staking contracts.
     owner_id: AccountId,
@@ -46,12 +47,6 @@ pub struct StakingPoolFactory {
 
     /// The account ID of the staking pools created.
     staking_pool_account_ids: UnorderedSet<AccountId>,
-}
-
-impl Default for StakingPoolFactory {
-    fn default() -> Self {
-        env::panic_str("The contract should be initialized before usage")
-    }
 }
 
 /// Rewards fee fraction structure for the staking pool contract.
@@ -106,7 +101,10 @@ impl StakingPoolFactory {
     /// contract.
     #[init]
     pub fn new(owner_id: AccountId, staking_pool_whitelist_account_id: AccountId) -> Self {
-        assert!(!env::state_exists(), "The contract is already initialized");
+        assert!(
+            env::is_valid_account_id(owner_id.as_bytes()),
+            "The owner account ID is invalid"
+        );
         assert!(
             env::is_valid_account_id(staking_pool_whitelist_account_id.as_bytes()),
             "The staking pool whitelist account ID is invalid"
@@ -227,14 +225,15 @@ impl StakingPoolFactory {
             PromiseOrValue::Value(false)
         }
     }
-}
 
-fn get_code(hash: CryptoHash) {
-    unsafe {
-        // Load the hash from storage.
-        sys::storage_read(hash.len() as _, hash.as_ptr() as _, 0);
-        // Return as value.
-        sys::value_return(u64::MAX as _, 0 as _);
+    /// Returns code at the given hash.
+    pub fn get_code(&self, hash: CryptoHash) {
+        unsafe {
+            // Load the hash from storage.
+            sys::storage_read(hash.len() as _, hash.as_ptr() as _, 0);
+            // Return as value.
+            sys::value_return(u64::MAX as _, 0 as _);
+        }
     }
 }
 
@@ -252,7 +251,7 @@ fn store_contract() {
         );
         // Store value of register 0 into key = register 1.
         sys::storage_write(u64::MAX as _, 1 as _, u64::MAX as _, 0 as _, 2);
-        // Load register 1 into blob_hash and save into LookupMap.
+        // Load register 1 into blob_hash.
         let blob_hash = [0u8; 32];
         sys::read_register(1, blob_hash.as_ptr() as _);
         // Return from function value of register 1.
@@ -270,9 +269,21 @@ fn create_contract(
 ) {
     let attached_deposit = env::attached_deposit();
     let factory_account_id = env::current_account_id().as_bytes().to_vec();
+    let encoded_args = near_sdk::serde_json::to_vec(&args).expect("Failed to serialize");
+    let callback_args = near_sdk::serde_json::to_vec(&json!({
+        "staking_pool_account_id": staking_pool_account_id,
+        "attached_deposit": format!("{}", attached_deposit),
+        "predecessor_account_id": env::predecessor_account_id(),
+    }))
+    .expect("Failed to serialize");
     let staking_pool_account_id = staking_pool_account_id.as_bytes().to_vec();
-    let encoded_args = near_sdk::serde_json::to_string(&args).expect("Failed to serialize");
     unsafe {
+        // Check that such contract exists.
+        assert_eq!(
+            sys::storage_has_key(code_hash.len() as _, code_hash.as_ptr() as _),
+            1,
+            "Contract doesn't exist"
+        );
         // Load input (wasm code) into register 0.
         sys::storage_read(code_hash.len() as _, code_hash.as_ptr() as _, 0);
         // schedule a Promise tx to account_id
@@ -293,7 +304,7 @@ fn create_contract(
             NEW_METHOD_NAME.as_ptr() as _,
             encoded_args.len() as _,
             encoded_args.as_ptr() as _,
-            0,
+            &NO_DEPOSIT as *const u128 as _,
             gas::STAKING_POOL_NEW.0,
         );
         // attach callback to the factory.
@@ -303,11 +314,12 @@ fn create_contract(
             factory_account_id.as_ptr() as _,
             ON_STAKING_POOL_CREATE.len() as _,
             ON_STAKING_POOL_CREATE.as_ptr() as _,
-            0,
-            0,
-            0,
+            callback_args.len() as _,
+            callback_args.as_ptr() as _,
+            &NO_DEPOSIT as *const u128 as _,
             gas::CALLBACK.0,
         );
+        sys::promise_return(promise_id);
     }
 }
 
@@ -315,7 +327,7 @@ fn create_contract(
 #[no_mangle]
 pub extern "C" fn store() {
     env::setup_panic_hook();
-    let mut contract: StakingPoolFactory = env::state_read().expect("Contract is not initialized");
+    let contract: StakingPoolFactory = env::state_read().expect("Contract is not initialized");
     assert_eq!(
         contract.owner_id,
         env::predecessor_account_id(),
@@ -326,9 +338,11 @@ pub extern "C" fn store() {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use near_sdk::env::sha256;
     use near_sdk::test_utils::{testing_env_with_promise_results, VMContextBuilder};
-    use near_sdk::{testing_env, PromiseResult};
+    use near_sdk::{testing_env, PromiseResult, VMContext};
+
+    use super::*;
 
     pub fn account_near() -> AccountId {
         "near".parse().unwrap()
@@ -356,6 +370,22 @@ mod tests {
         near_amount * 10u128.pow(24)
     }
 
+    pub fn get_hash(data: &[u8]) -> Base58CryptoHash {
+        let hash = sha256(&data);
+        let mut result: CryptoHash = [0; 32];
+        result.copy_from_slice(&hash);
+        Base58CryptoHash::from(result)
+    }
+
+    pub fn add_staking_contract(context: &mut VMContext) -> Base58CryptoHash {
+        context.input = include_bytes!("../../res/staking_farm_local.wasm").to_vec();
+        let hash = get_hash(&context.input);
+        testing_env!(context.clone());
+        store_contract();
+        context.input = vec![];
+        hash
+    }
+
     #[test]
     fn test_create_staking_pool_success() {
         let mut context = VMContextBuilder::new()
@@ -365,7 +395,9 @@ mod tests {
         testing_env!(context.clone());
 
         let mut contract = StakingPoolFactory::new(account_near(), account_whitelist());
+        let hash = add_staking_contract(&mut context);
 
+        context.input = vec![];
         context.is_view = true;
         testing_env!(context.clone());
         assert_eq!(contract.get_min_attached_balance().0, MIN_ATTACHED_BALANCE);
@@ -377,7 +409,7 @@ mod tests {
         testing_env!(context.clone());
         contract.create_staking_pool(
             staking_pool_id(),
-            "".parse().unwrap(),
+            hash,
             account_pool_owner(),
             "KuTCtARNzxZQ3YvXDeLjx83FDqxv2SdQTSbiq876zR7"
                 .parse()
@@ -408,6 +440,7 @@ mod tests {
         testing_env!(context.clone());
 
         let mut contract = StakingPoolFactory::new(account_near(), account_whitelist());
+        let hash = add_staking_contract(&mut context);
 
         // Checking the pool is still whitelisted
         context.is_view = true;
@@ -421,7 +454,7 @@ mod tests {
         testing_env!(context.clone());
         contract.create_staking_pool(
             staking_pool_id(),
-            "".parse().unwrap(),
+            hash,
             account_pool_owner(),
             "KuTCtARNzxZQ3YvXDeLjx83FDqxv2SdQTSbiq876zR7"
                 .parse()
@@ -442,6 +475,7 @@ mod tests {
         testing_env!(context.clone());
 
         let mut contract = StakingPoolFactory::new(account_near(), account_whitelist());
+        let hash = add_staking_contract(&mut context);
 
         context.is_view = true;
         testing_env!(context.clone());
@@ -454,7 +488,7 @@ mod tests {
         testing_env!(context.clone());
         contract.create_staking_pool(
             staking_pool_id(),
-            "".parse().unwrap(),
+            hash,
             account_pool_owner(),
             "KuTCtARNzxZQ3YvXDeLjx83FDqxv2SdQTSbiq876zR7"
                 .parse()
