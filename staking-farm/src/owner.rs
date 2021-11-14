@@ -5,12 +5,14 @@ use near_sdk::sys::{promise_batch_action_function_call, promise_batch_then};
 
 const OWNER_KEY: &[u8; 5] = b"OWNER";
 const FACTORY_KEY: &[u8; 7] = b"FACTORY";
+const VERSION_KEY: &[u8; 7] = b"VERSION";
 const GET_CODE_METHOD_NAME: &[u8; 8] = b"get_code";
-const GET_CODE_GAS: Gas = Gas(10_000_000_000_000);
+const GET_CODE_GAS: Gas = Gas(50_000_000_000_000);
 const SELF_UPGRADE_METHOD_NAME: &[u8; 6] = b"update";
-const SELF_UPGRADE_GAS: Gas = Gas(20_000_000_000_000);
 const SELF_MIGRATE_METHOD_NAME: &[u8; 7] = b"migrate";
 const UPGRADE_GAS_LEFTOVER: Gas = Gas(5_000_000_000_000);
+const UPDATE_GAS_LEFTOVER: Gas = Gas(5_000_000_000_000);
+const NO_DEPOSIT: Balance = 0;
 
 const ERR_MUST_BE_OWNER: &str = "Can only be called by the owner";
 const ERR_MUST_BE_SELF: &str = "Can only be called by contract itself";
@@ -21,26 +23,35 @@ const ERR_MUST_BE_SELF: &str = "Can only be called by contract itself";
 #[near_bindgen]
 impl StakingContract {
     /// Returns current contract version.
-    pub fn get_version(&self) -> String {
+    pub fn get_version() -> String {
         format!("{}:{}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"))
     }
 
     /// Storing owner in a separate storage to avoid STATE corruption issues.
     /// Returns previous owner if it existed.
-    pub(crate) fn internal_set_owner(&self, owner_id: &AccountId) -> Option<AccountId> {
+    pub(crate) fn internal_set_owner(owner_id: &AccountId) -> Option<AccountId> {
         env::storage_write(OWNER_KEY, owner_id.as_bytes());
         env::storage_get_evicted()
             .map(|bytes| AccountId::new_unchecked(String::from_utf8(bytes).expect("INTERNAL FAIL")))
     }
 
     /// Store the factory in the storage independent of the STATE.
-    pub(crate) fn internal_set_factory(&self, factory_id: &AccountId) {
+    pub(crate) fn internal_set_factory(factory_id: &AccountId) {
         env::storage_write(FACTORY_KEY, factory_id.as_bytes());
+    }
+
+    pub(crate) fn internal_set_version() {
+        env::storage_write(VERSION_KEY, Self::get_version().as_bytes());
+    }
+
+    pub(crate) fn internal_get_state_version() -> String {
+        String::from_utf8(env::storage_read(VERSION_KEY).expect("MUST HAVE VERSION"))
+            .expect("INTERNAL_FAIL")
     }
 
     /// Changes contract owner. Must be called by current owner.
     pub fn set_owner_id(&self, owner_id: &AccountId) {
-        let prev_owner = self.internal_set_owner(owner_id).expect("MUST HAVE OWNER");
+        let prev_owner = StakingContract::internal_set_owner(owner_id).expect("MUST HAVE OWNER");
         assert_eq!(
             prev_owner,
             env::predecessor_account_id(),
@@ -168,7 +179,7 @@ pub extern "C" fn upgrade() {
             GET_CODE_METHOD_NAME.as_ptr() as _,
             u64::MAX as _,
             0,
-            0,
+            &NO_DEPOSIT as *const u128 as _,
             GET_CODE_GAS.0,
         );
         // Add callback to actually redeploy and migrate.
@@ -183,32 +194,15 @@ pub extern "C" fn upgrade() {
             SELF_UPGRADE_METHOD_NAME.as_ptr() as _,
             0,
             0,
-            0,
-            SELF_UPGRADE_GAS.0,
+            &NO_DEPOSIT as *const u128 as _,
+            (env::prepaid_gas() - env::used_gas() - GET_CODE_GAS - UPGRADE_GAS_LEFTOVER).0,
         );
-        let migrate_id = promise_batch_then(
-            callback_id,
-            current_id.as_bytes().len() as _,
-            current_id.as_bytes().as_ptr() as _,
-        );
-        promise_batch_action_function_call(
-            migrate_id,
-            SELF_MIGRATE_METHOD_NAME.len() as _,
-            SELF_MIGRATE_METHOD_NAME.as_ptr() as _,
-            0,
-            0,
-            0,
-            (env::prepaid_gas()
-                - env::used_gas()
-                - GET_CODE_GAS
-                - SELF_UPGRADE_GAS
-                - UPGRADE_GAS_LEFTOVER)
-                .0,
-        );
+        sys::promise_return(callback_id);
     }
 }
 
 /// Updating current contract with the received code from factory.
+#[no_mangle]
 pub extern "C" fn update() {
     env::setup_panic_hook();
     let current_id = env::current_account_id();
@@ -219,8 +213,8 @@ pub extern "C" fn update() {
         ERR_MUST_BE_SELF
     );
     unsafe {
-        // Load code into register 0.
-        sys::input(0);
+        // Load code into register 0 result from the promise.
+        sys::promise_result(0, 0);
         // Update current contract with code from register 0.
         let promise_id = sys::promise_batch_create(
             current_id.as_bytes().len() as _,
@@ -228,10 +222,24 @@ pub extern "C" fn update() {
         );
         // Deploy the contract code.
         sys::promise_batch_action_deploy_contract(promise_id, u64::MAX as _, 0);
+        // Call promise to migrate the state.
+        // Batched together to fail upgrade if migration fails.
+        promise_batch_action_function_call(
+            promise_id,
+            SELF_MIGRATE_METHOD_NAME.len() as _,
+            SELF_MIGRATE_METHOD_NAME.as_ptr() as _,
+            0,
+            0,
+            &NO_DEPOSIT as *const u128 as _,
+            (env::prepaid_gas() - env::used_gas() - UPDATE_GAS_LEFTOVER).0,
+        );
+        sys::promise_return(promise_id);
     }
 }
 
 /// Empty migrate method for future use.
+/// Makes sure that state version is previous.
+/// When updating code, make sure to update what previous version actually is.
 #[no_mangle]
 pub extern "C" fn migrate() {
     env::setup_panic_hook();
@@ -240,5 +248,12 @@ pub extern "C" fn migrate() {
         env::current_account_id(),
         "{}",
         ERR_MUST_BE_SELF
+    );
+    // Check that state version is previous.
+    // Will fail migration in the case of trying to skip the versions.
+    assert_eq!(
+        StakingContract::internal_get_state_version(),
+        // TODO: change this when writing migration.
+        StakingContract::get_version()
     );
 }

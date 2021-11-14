@@ -227,10 +227,17 @@ impl StakingPoolFactory {
     }
 
     /// Returns code at the given hash.
-    pub fn get_code(&self, hash: CryptoHash) {
+    pub fn get_code(&self, code_hash: Base58CryptoHash) {
+        let code_hash: CryptoHash = code_hash.into();
         unsafe {
+            // Check that such contract exists.
+            assert_eq!(
+                sys::storage_has_key(code_hash.len() as _, code_hash.as_ptr() as _),
+                1,
+                "Contract doesn't exist"
+            );
             // Load the hash from storage.
-            sys::storage_read(hash.len() as _, hash.as_ptr() as _, 0);
+            sys::storage_read(code_hash.len() as _, code_hash.as_ptr() as _, 0);
             // Return as value.
             sys::value_return(u64::MAX as _, 0 as _);
         }

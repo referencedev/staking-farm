@@ -1,13 +1,18 @@
 use near_sdk::json_types::Base58CryptoHash;
 use near_sdk::serde_json::{self, json};
 use near_sdk::{AccountId, PublicKey};
-use near_sdk_sim::{call, deploy, init_simulator, to_yocto, view, ContractAccount, UserAccount};
+use near_sdk_sim::{
+    call, deploy, init_simulator, to_yocto, view, ContractAccount, ExecutionResult, UserAccount,
+};
 
+use near_sdk_sim::transaction::ExecutionStatus;
 use staking_factory::{RewardFeeFraction, StakingPoolFactoryContract};
 
 const STAKING_POOL_WHITELIST_ACCOUNT_ID: &str = "staking-pool-whitelist";
 const STAKING_POOL_ID: &str = "pool";
 const STAKING_POOL_ACCOUNT_ID: &str = "pool.factory";
+const STAKING_KEY: &str = "KuTCtARNzxZQ3YvXDeLjx83FDqxv2SdQTSbiq876zR7";
+const POOL_DEPOSIT: &str = "50";
 
 near_sdk_sim::lazy_static_include::lazy_static_include_bytes! {
     FACTORY_WASM_BYTES => "../res/staking_factory_local.wasm",
@@ -79,54 +84,108 @@ fn is_whitelisted(account: &UserAccount, account_id: &str) -> bool {
         .unwrap_json::<bool>()
 }
 
-#[test]
-fn create_staking_pool_success() {
-    let (root, _foundation, factory, code_hash) = setup_factory();
-    let balance = to_yocto("100");
-    let pool_deposit = to_yocto("50");
-    let user1 = root.create_user(AccountId::new_unchecked("user1".to_string()), balance);
+fn create_staking_pool(
+    user: &UserAccount,
+    factory: &FactoryContract,
+    code_hash: Base58CryptoHash,
+) -> ExecutionResult {
     let fee = RewardFeeFraction {
         numerator: 10,
         denominator: 100,
     };
-    let staking_key: PublicKey = "KuTCtARNzxZQ3YvXDeLjx83FDqxv2SdQTSbiq876zR7"
-        .parse()
-        .unwrap();
-    let result = call!(
-        user1,
+    call!(
+        user,
         factory.create_staking_pool(
             STAKING_POOL_ID.to_string(),
             code_hash,
-            user1.account_id(),
-            staking_key.clone(),
+            user.account_id(),
+            STAKING_KEY.parse().unwrap(),
             fee
         ),
-        deposit = pool_deposit
+        deposit = to_yocto(POOL_DEPOSIT)
+    )
+}
+pub fn should_fail(r: ExecutionResult) {
+    match r.status() {
+        ExecutionStatus::Failure(_) => {}
+        _ => panic!("Should fail"),
+    }
+}
+
+fn assert_all_success(result: ExecutionResult) {
+    let mut all_success = true;
+    let mut all_results = String::new();
+    for r in result.promise_results() {
+        let x = r.expect("NO_RESULT");
+        all_results = format!("{}\n{:?}", all_results, x);
+        all_success &= x.is_ok();
+    }
+    println!("{}", all_results);
+    assert!(
+        all_success,
+        "Not all promises where successful: \n\n{}",
+        all_results
     );
-    result.assert_success();
-    println!("{:?}", result.promise_results());
+}
+
+fn get_staking_pool_key(user: &UserAccount) -> PublicKey {
+    user.view(
+        AccountId::new_unchecked(STAKING_POOL_ACCOUNT_ID.to_string()),
+        "get_staking_key",
+        &[],
+    )
+    .unwrap_json()
+}
+
+#[test]
+fn create_staking_pool_success() {
+    let (root, _foundation, factory, code_hash) = setup_factory();
+    let balance = to_yocto("100");
+    let user1 = root.create_user(AccountId::new_unchecked("user1".to_string()), balance);
+    assert_all_success(create_staking_pool(&user1, &factory, code_hash));
     let pools_created = view!(factory.get_number_of_staking_pools_created()).unwrap_json::<u64>();
     assert_eq!(pools_created, 1);
     assert!(is_whitelisted(&root, STAKING_POOL_ACCOUNT_ID));
 
     // The caller was charged the amount + some for fees
     let new_balance = user1.account().unwrap().amount;
-    assert!(new_balance > balance - pool_deposit - to_yocto("0.02"));
+    assert!(new_balance > balance - to_yocto(POOL_DEPOSIT) - to_yocto("0.02"));
 
     // Pool account was created and attached deposit was transferred + some from 30% dev fees.
     let acc = root
         .borrow_runtime()
         .view_account(STAKING_POOL_ACCOUNT_ID)
         .expect("MUST BE CREATED");
-    assert!(acc.amount + acc.locked > pool_deposit);
+    assert!(acc.amount + acc.locked > to_yocto(POOL_DEPOSIT));
 
     // The staking key on the pool matches the one that was given.
-    let actual_staking_key: PublicKey = root
-        .view(
-            AccountId::new_unchecked(STAKING_POOL_ACCOUNT_ID.to_string()),
-            "get_staking_key",
-            &[],
-        )
-        .unwrap_json();
-    assert_eq!(actual_staking_key, staking_key);
+    assert_eq!(get_staking_pool_key(&root), STAKING_KEY.parse().unwrap());
+}
+
+#[test]
+fn test_staking_pool_upgrade() {
+    let (root, _foundation, factory, code_hash) = setup_factory();
+    create_staking_pool(&root, &factory, code_hash).assert_success();
+    // Upgrade staking pool.
+    assert_all_success(root.call(
+        AccountId::new_unchecked(STAKING_POOL_ACCOUNT_ID.to_string()),
+        "upgrade",
+        &serde_json::to_vec(&json!({ "code_hash": code_hash })).unwrap(),
+        near_sdk_sim::DEFAULT_GAS,
+        0,
+    ));
+    // Check that contract works.
+    assert_eq!(get_staking_pool_key(&root), STAKING_KEY.parse().unwrap());
+}
+
+#[test]
+fn test_get_code() {
+    let (_root, _foundation, factory, code_hash) = setup_factory();
+    let result: Vec<u8> = view!(factory.get_code(code_hash)).unwrap();
+    assert_eq!(result, STAKING_FARM_BYTES.to_vec());
+    assert!(view!(factory.get_code([0u8; 32].into()))
+        .unwrap_err()
+        .to_string()
+        .find("Contract doesn't exist")
+        .is_some());
 }

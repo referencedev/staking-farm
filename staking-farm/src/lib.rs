@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::convert::TryInto;
 
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
@@ -12,7 +13,6 @@ use uint::construct_uint;
 
 use crate::account::{Account, NumStakeShares};
 use crate::farm::Farm;
-use std::collections::HashSet;
 
 mod account;
 mod farm;
@@ -145,7 +145,9 @@ impl StakingContract {
             paused: false,
             authorized_users: HashSet::new(),
         };
-        this.internal_set_owner(&owner_id);
+        Self::internal_set_owner(&owner_id);
+        Self::internal_set_factory(&env::predecessor_account_id());
+        Self::internal_set_version();
         // Staking with the current pool to make sure the staking key is valid.
         this.internal_restake();
         this
@@ -161,17 +163,17 @@ impl StakingContract {
 
 #[cfg(test)]
 mod tests {
+    use near_contract_standards::fungible_token::receiver::FungibleTokenReceiver;
+    use near_sdk::json_types::U64;
     use near_sdk::mock::VmAction;
     use near_sdk::serde_json;
     use near_sdk::test_utils::{get_created_receipts, testing_env_with_promise_results};
 
     use crate::test_utils::tests::*;
     use crate::test_utils::*;
+    use crate::token_receiver::FarmingDetails;
 
     use super::*;
-    use crate::token_receiver::FarmingDetails;
-    use near_contract_standards::fungible_token::receiver::FungibleTokenReceiver;
-    use near_sdk::json_types::U64;
 
     #[test]
     fn test_restake_fail() {
