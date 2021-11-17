@@ -156,7 +156,7 @@ impl StakingContract {
     }
 
     /// Returns the current reward fee as a fraction.
-    pub fn get_reward_fee_fraction(&self) -> RewardFeeFraction {
+    pub fn get_reward_fee_fraction(&self) -> Ratio {
         self.reward_fee_fraction.clone()
     }
 

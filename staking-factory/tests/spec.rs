@@ -6,7 +6,7 @@ use near_sdk_sim::{
 };
 
 use near_sdk_sim::transaction::ExecutionStatus;
-use staking_factory::{RewardFeeFraction, StakingPoolFactoryContract};
+use staking_factory::{Ratio, StakingPoolFactoryContract};
 
 const STAKING_POOL_WHITELIST_ACCOUNT_ID: &str = "staking-pool-whitelist";
 const STAKING_POOL_ID: &str = "pool";
@@ -89,8 +89,12 @@ fn create_staking_pool(
     factory: &FactoryContract,
     code_hash: Base58CryptoHash,
 ) -> ExecutionResult {
-    let fee = RewardFeeFraction {
+    let fee = Ratio {
         numerator: 10,
+        denominator: 100,
+    };
+    let burn_fee = Ratio {
+        numerator: 30,
         denominator: 100,
     };
     call!(
@@ -100,7 +104,8 @@ fn create_staking_pool(
             code_hash,
             user.account_id(),
             STAKING_KEY.parse().unwrap(),
-            fee
+            fee,
+            burn_fee
         ),
         deposit = to_yocto(POOL_DEPOSIT)
     )
@@ -176,6 +181,29 @@ fn test_staking_pool_upgrade() {
     ));
     // Check that contract works.
     assert_eq!(get_staking_pool_key(&root), STAKING_KEY.parse().unwrap());
+}
+
+fn wait_epoch(user: &UserAccount) {
+    let epoch_height = user.borrow_runtime().cur_block.epoch_height;
+    while user.borrow_runtime().cur_block.epoch_height == epoch_height {
+        assert!(user.borrow_runtime_mut().produce_block().is_ok());
+    }
+}
+
+#[test]
+fn test_staking_pool_burn() {
+    let (root, _foundation, factory, code_hash) = setup_factory();
+    create_staking_pool(&root, &factory, code_hash).assert_success();
+    let account_id = AccountId::new_unchecked(STAKING_POOL_ACCOUNT_ID.to_string());
+    assert_all_success(root.call(
+        account_id.clone(),
+        "deposit_and_stake",
+        &[],
+        near_sdk_sim::DEFAULT_GAS,
+        to_yocto("100000000"),
+    ));
+    wait_epoch(&root);
+    assert_all_success(root.call(account_id, "ping", &[], near_sdk_sim::DEFAULT_GAS, 0));
 }
 
 #[test]

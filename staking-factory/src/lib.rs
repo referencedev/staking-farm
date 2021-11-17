@@ -52,12 +52,12 @@ pub struct StakingPoolFactory {
 /// Rewards fee fraction structure for the staking pool contract.
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(crate = "near_sdk::serde")]
-pub struct RewardFeeFraction {
+pub struct Ratio {
     pub numerator: u32,
     pub denominator: u32,
 }
 
-impl RewardFeeFraction {
+impl Ratio {
     pub fn assert_valid(&self) {
         assert_ne!(self.denominator, 0, "Denominator must be a positive number");
         assert!(
@@ -75,7 +75,9 @@ pub struct StakingPoolArgs {
     /// The initial staking key.
     stake_public_key: PublicKey,
     /// The initial reward fee fraction.
-    reward_fee_fraction: RewardFeeFraction,
+    reward_fee_fraction: Ratio,
+    /// The burn fee fraction.
+    burn_fee_fraction: Ratio,
 }
 
 /// External interface for the callbacks to self.
@@ -136,6 +138,7 @@ impl StakingPoolFactory {
     ///     pool.
     /// - `stake_public_key` - the initial staking key for the staking pool.
     /// - `reward_fee_fraction` - the initial reward fee fraction for the staking pool.
+    /// - `burn_fee_fraction` - the burn fee fraction for the staking pool.
     #[payable]
     pub fn create_staking_pool(
         &mut self,
@@ -143,7 +146,8 @@ impl StakingPoolFactory {
         code_hash: Base58CryptoHash,
         owner_id: AccountId,
         stake_public_key: PublicKey,
-        reward_fee_fraction: RewardFeeFraction,
+        reward_fee_fraction: Ratio,
+        burn_fee_fraction: Ratio,
     ) {
         assert!(
             env::attached_deposit() >= MIN_ATTACHED_BALANCE,
@@ -183,6 +187,7 @@ impl StakingPoolFactory {
                 owner_id,
                 stake_public_key,
                 reward_fee_fraction,
+                burn_fee_fraction,
             },
         );
     }
@@ -421,9 +426,13 @@ mod tests {
             "KuTCtARNzxZQ3YvXDeLjx83FDqxv2SdQTSbiq876zR7"
                 .parse()
                 .unwrap(),
-            RewardFeeFraction {
+            Ratio {
                 numerator: 10,
                 denominator: 100,
+            },
+            Ratio {
+                numerator: 0,
+                denominator: 0,
             },
         );
 
@@ -466,9 +475,13 @@ mod tests {
             "KuTCtARNzxZQ3YvXDeLjx83FDqxv2SdQTSbiq876zR7"
                 .parse()
                 .unwrap(),
-            RewardFeeFraction {
+            Ratio {
                 numerator: 10,
                 denominator: 100,
+            },
+            Ratio {
+                numerator: 0,
+                denominator: 0,
             },
         );
     }
@@ -500,9 +513,13 @@ mod tests {
             "KuTCtARNzxZQ3YvXDeLjx83FDqxv2SdQTSbiq876zR7"
                 .parse()
                 .unwrap(),
-            RewardFeeFraction {
+            Ratio {
                 numerator: 10,
                 denominator: 100,
+            },
+            Ratio {
+                numerator: 0,
+                denominator: 0,
             },
         );
 

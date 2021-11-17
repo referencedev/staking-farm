@@ -87,7 +87,7 @@ impl StakingContract {
 
     /// Owner's method.
     /// Updates current reward fee fraction to the new given fraction.
-    pub fn update_reward_fee_fraction(&mut self, reward_fee_fraction: RewardFeeFraction) {
+    pub fn update_reward_fee_fraction(&mut self, reward_fee_fraction: Ratio) {
         self.assert_owner();
         reward_fee_fraction.assert_valid();
 
