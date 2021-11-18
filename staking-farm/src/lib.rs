@@ -595,7 +595,7 @@ mod tests {
         ));
 
         emulator.update_context(alice(), 0);
-        emulator.contract.claim(bob());
+        emulator.contract.claim(bob(), None);
         assert_eq!(emulator.contract.get_unclaimed_reward(alice(), 0).0, 0);
     }
 }
