@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::convert::TryInto;
 
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
@@ -12,7 +13,6 @@ use uint::construct_uint;
 
 use crate::account::{Account, NumStakeShares};
 use crate::farm::Farm;
-use std::collections::HashSet;
 
 mod account;
 mod farm;
@@ -62,7 +62,9 @@ pub struct StakingContract {
     pub total_staked_balance: Balance,
     /// The fraction of the reward that goes to the owner of the staking pool for running the
     /// validator node.
-    pub reward_fee_fraction: RewardFeeFraction,
+    pub reward_fee_fraction: Ratio,
+    /// The fraction of the reward that gets burnt.
+    pub burn_fee_fraction: Ratio,
     /// Persistent map from an account ID to the corresponding account.
     pub accounts: UnorderedMap<AccountId, Account>,
     /// Farm tokens.
@@ -87,12 +89,12 @@ impl Default for StakingContract {
 
 #[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize, Clone)]
 #[serde(crate = "near_sdk::serde")]
-pub struct RewardFeeFraction {
+pub struct Ratio {
     pub numerator: u32,
     pub denominator: u32,
 }
 
-impl RewardFeeFraction {
+impl Ratio {
     pub fn assert_valid(&self) {
         assert_ne!(self.denominator, 0, "Denominator must be a positive number");
         assert!(
@@ -102,7 +104,12 @@ impl RewardFeeFraction {
     }
 
     pub fn multiply(&self, value: Balance) -> Balance {
-        (U256::from(self.numerator) * U256::from(value) / U256::from(self.denominator)).as_u128()
+        if self.denominator == 0 || self.numerator == 0 {
+            0
+        } else {
+            (U256::from(self.numerator) * U256::from(value) / U256::from(self.denominator))
+                .as_u128()
+        }
     }
 }
 
@@ -118,7 +125,8 @@ impl StakingContract {
     pub fn new(
         owner_id: AccountId,
         stake_public_key: PublicKey,
-        reward_fee_fraction: RewardFeeFraction,
+        reward_fee_fraction: Ratio,
+        burn_fee_fraction: Ratio,
     ) -> Self {
         assert!(!env::state_exists(), "Already initialized");
         reward_fee_fraction.assert_valid();
@@ -140,12 +148,15 @@ impl StakingContract {
             total_staked_balance,
             total_stake_shares: NumStakeShares::from(total_staked_balance),
             reward_fee_fraction,
+            burn_fee_fraction,
             accounts: UnorderedMap::new(b"u".to_vec()),
             farms: Vector::new(b"v".to_vec()),
             paused: false,
             authorized_users: HashSet::new(),
         };
-        this.internal_set_owner(&owner_id);
+        Self::internal_set_owner(&owner_id);
+        Self::internal_set_factory(&env::predecessor_account_id());
+        Self::internal_set_version();
         // Staking with the current pool to make sure the staking key is valid.
         this.internal_restake();
         this
@@ -161,17 +172,17 @@ impl StakingContract {
 
 #[cfg(test)]
 mod tests {
+    use near_contract_standards::fungible_token::receiver::FungibleTokenReceiver;
+    use near_sdk::json_types::U64;
     use near_sdk::mock::VmAction;
     use near_sdk::serde_json;
     use near_sdk::test_utils::{get_created_receipts, testing_env_with_promise_results};
 
     use crate::test_utils::tests::*;
     use crate::test_utils::*;
+    use crate::token_receiver::FarmingDetails;
 
     use super::*;
-    use crate::token_receiver::FarmingDetails;
-    use near_contract_standards::fungible_token::receiver::FungibleTokenReceiver;
-    use near_sdk::json_types::U64;
 
     #[test]
     fn test_restake_fail() {
@@ -241,7 +252,7 @@ mod tests {
             "KuTCtARNzxZQ3YvXDeLjx83FDqxv2SdQTSbiq876zR7"
                 .parse()
                 .unwrap(),
-            RewardFeeFraction {
+            Ratio {
                 numerator: 10,
                 denominator: 100,
             },
@@ -584,9 +595,7 @@ mod tests {
         ));
 
         emulator.update_context(alice(), 0);
-        emulator
-            .contract
-            .claim(bob(), emulator.contract.get_unclaimed_reward(alice(), 0));
+        emulator.contract.claim(bob(), None);
         assert_eq!(emulator.contract.get_unclaimed_reward(alice(), 0).0, 0);
     }
 }

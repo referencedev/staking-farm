@@ -69,8 +69,8 @@ pub mod tests {
         pub context: VMContext,
     }
 
-    pub fn zero_fee() -> RewardFeeFraction {
-        RewardFeeFraction {
+    pub fn zero_fee() -> Ratio {
+        Ratio {
             numerator: 0,
             denominator: 1,
         }
@@ -80,14 +80,22 @@ pub mod tests {
         pub fn new(
             owner: AccountId,
             stake_public_key: PublicKey,
-            reward_fee_fraction: RewardFeeFraction,
+            reward_fee_fraction: Ratio,
         ) -> Self {
             let context = VMContextBuilder::new()
                 .current_account_id(owner.clone())
                 .account_balance(ntoy(30))
                 .build();
             testing_env!(context.clone());
-            let contract = StakingContract::new(owner, stake_public_key, reward_fee_fraction);
+            let contract = StakingContract::new(
+                owner,
+                stake_public_key,
+                reward_fee_fraction,
+                Ratio {
+                    numerator: 0,
+                    denominator: 0,
+                },
+            );
             let last_total_staked_balance = contract.total_staked_balance;
             let last_total_stake_shares = contract.total_stake_shares;
             Emulator {

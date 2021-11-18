@@ -13,11 +13,14 @@ pub trait SelfContract {
 
     /// Check if reward withdrawal succeeded and if it failed, refund reward back to the user.
     fn callback_post_withdraw_reward(
-        mut self,
+        &mut self,
         token_id: AccountId,
         sender_id: AccountId,
         amount: U128,
     );
+
+    /// Callback after getting the owner of the given account.
+    fn callback_post_get_owner(&mut self, token_id: AccountId, account_id: AccountId) -> Promise;
 }
 
 #[near_bindgen]
@@ -156,7 +159,7 @@ impl StakingContract {
     }
 
     /// Returns the current reward fee as a fraction.
-    pub fn get_reward_fee_fraction(&self) -> RewardFeeFraction {
+    pub fn get_reward_fee_fraction(&self) -> Ratio {
         self.reward_fee_fraction.clone()
     }
 

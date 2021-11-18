@@ -2,6 +2,13 @@ use crate::stake::ext_self;
 use crate::*;
 use near_sdk::log;
 
+/// Zero address is implicit address that doesn't have a key for it.
+/// Used for burning tokens.
+const ZERO_ADDRESS: &str = "0000000000000000000000000000000000000000000000000000000000000000";
+
+/// Minimum amount that will be sent to burn. This is to ensure there is enough storage on the other side.
+const MIN_BURN_AMOUNT: Balance = 1694457700619870000000;
+
 impl StakingContract {
     /********************/
     /* Internal methods */
@@ -186,15 +193,6 @@ impl StakingContract {
         );
     }
 
-    /// Asserts that the method was called by the owner.
-    pub(crate) fn assert_owner(&self) {
-        assert_eq!(
-            env::predecessor_account_id(),
-            self.get_owner_id(),
-            "Can only be called by the owner"
-        );
-    }
-
     /// Distributes rewards after the new epoch. It's automatically called before every action.
     /// Returns true if the current epoch height is different from the last epoch height.
     pub(crate) fn internal_ping(&mut self) -> bool {
@@ -215,8 +213,24 @@ impl StakingContract {
             total_balance >= self.last_total_balance,
             "The new total balance should not be less than the old total balance"
         );
-        let total_reward = total_balance - self.last_total_balance;
+        let mut total_reward = total_balance - self.last_total_balance;
         if total_reward > 0 {
+            // Burn fee gets computed first.
+            let mut burn_fee = self.burn_fee_fraction.multiply(total_reward);
+
+            if burn_fee > 0 {
+                // TODO: replace with burn host function when available.
+                if burn_fee < MIN_BURN_AMOUNT {
+                    burn_fee = 0
+                } else {
+                    Promise::new(AccountId::new_unchecked(ZERO_ADDRESS.to_string()))
+                        .transfer(burn_fee);
+                }
+            }
+
+            // All subsequent computations are done without part that is going to be burnt.
+            total_reward -= burn_fee;
+
             // The validation fee that the contract owner takes.
             let owners_fee = self.reward_fee_fraction.multiply(total_reward);
 
@@ -228,7 +242,7 @@ impl StakingContract {
             let num_shares = self.num_shares_from_staked_amount_rounded_down(owners_fee);
             if num_shares > 0 {
                 // Updating owner's inner account
-                let owner_id = self.get_owner_id();
+                let owner_id = StakingContract::get_owner_id();
                 let mut account = self.internal_get_account(&owner_id);
                 account.stake_shares += num_shares;
                 self.internal_save_account(&owner_id, &account);
@@ -240,10 +254,11 @@ impl StakingContract {
             self.total_staked_balance += owners_fee;
 
             log!(
-                "Epoch {}: Contract received total rewards of {} tokens. New total staked balance \
-                 is {}. Total number of shares {}",
+                "Epoch {}: Contract received total rewards of {} tokens and {} burnt. \
+                 New total staked balance is {}. Total number of shares {}",
                 epoch_height,
                 total_reward,
+                burn_fee,
                 self.total_staked_balance,
                 self.total_stake_shares,
             );
