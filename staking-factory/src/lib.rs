@@ -17,6 +17,12 @@ const ON_STAKING_POOL_CREATE: &str = "on_staking_pool_create";
 /// There is no deposit balance attached.
 const NO_DEPOSIT: Balance = 0;
 
+/// Burn fee that whitelisted contracts take.
+const BURN_FEE_FRACTION: Ratio = Ratio {
+    numerator: 3,
+    denominator: 10,
+};
+
 pub mod gas {
     use near_sdk::Gas;
 
@@ -76,7 +82,7 @@ pub struct StakingPoolArgs {
     stake_public_key: PublicKey,
     /// The initial reward fee fraction.
     reward_fee_fraction: Ratio,
-    /// The burn fee fraction.
+    /// Burn fee fraction.
     burn_fee_fraction: Ratio,
 }
 
@@ -147,7 +153,6 @@ impl StakingPoolFactory {
         owner_id: AccountId,
         stake_public_key: PublicKey,
         reward_fee_fraction: Ratio,
-        burn_fee_fraction: Ratio,
     ) {
         assert!(
             env::attached_deposit() >= MIN_ATTACHED_BALANCE,
@@ -187,7 +192,7 @@ impl StakingPoolFactory {
                 owner_id,
                 stake_public_key,
                 reward_fee_fraction,
-                burn_fee_fraction,
+                burn_fee_fraction: BURN_FEE_FRACTION,
             },
         );
     }
@@ -430,10 +435,6 @@ mod tests {
                 numerator: 10,
                 denominator: 100,
             },
-            Ratio {
-                numerator: 0,
-                denominator: 0,
-            },
         );
 
         context.predecessor_account_id = account_factory().into();
@@ -479,10 +480,6 @@ mod tests {
                 numerator: 10,
                 denominator: 100,
             },
-            Ratio {
-                numerator: 0,
-                denominator: 0,
-            },
         );
     }
 
@@ -516,10 +513,6 @@ mod tests {
             Ratio {
                 numerator: 10,
                 denominator: 100,
-            },
-            Ratio {
-                numerator: 0,
-                denominator: 0,
             },
         );
 

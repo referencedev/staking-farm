@@ -93,10 +93,6 @@ fn create_staking_pool(
         numerator: 10,
         denominator: 100,
     };
-    let burn_fee = Ratio {
-        numerator: 30,
-        denominator: 100,
-    };
     call!(
         user,
         factory.create_staking_pool(
@@ -105,7 +101,6 @@ fn create_staking_pool(
             user.account_id(),
             STAKING_KEY.parse().unwrap(),
             fee,
-            burn_fee
         ),
         deposit = to_yocto(POOL_DEPOSIT)
     )

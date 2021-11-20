@@ -2593,8 +2593,14 @@ dependencies = [
 name = "staking-farm"
 version = "1.0.0"
 dependencies = [
+ "env_logger",
+ "lazy_static",
+ "log",
  "near-contract-standards",
  "near-sdk",
+ "near-sdk-sim",
+ "quickcheck",
+ "quickcheck_macros",
  "uint",
 ]
 
