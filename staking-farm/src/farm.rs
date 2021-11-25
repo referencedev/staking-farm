@@ -69,7 +69,11 @@ impl StakingContract {
     ) {
         assert!(start_date >= env::block_timestamp(), "ERR_FARM_TOO_EARLY");
         assert!(end_date > start_date, "ERR_FARM_DATE");
-        assert!(amount > 0, "ERR_FARM_AMOUNT");
+        assert!(amount > 0, "ERR_FARM_AMOUNT_NON_ZERO");
+        assert!(
+            amount / ((end_date - start_date) / SESSION_INTERVAL) as u128 > 0,
+            "ERR_FARM_AMOUNT_TOO_SMALL"
+        );
         self.farms.push(&Farm {
             name,
             token_id: token_id.clone(),

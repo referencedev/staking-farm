@@ -598,4 +598,27 @@ mod tests {
         emulator.contract.claim(bob(), None);
         assert_eq!(emulator.contract.get_unclaimed_reward(alice(), 0).0, 0);
     }
+
+    #[test]
+    #[should_panic(expected = "ERR_FARM_AMOUNT_TOO_SMALL")]
+    fn test_farm_too_small_amount() {
+        let mut emulator = Emulator::new(
+            owner(),
+            "KuTCtARNzxZQ3YvXDeLjx83FDqxv2SdQTSbiq876zR7"
+                .parse()
+                .unwrap(),
+            zero_fee(),
+        );
+        emulator.update_context(bob(), 0);
+        emulator.contract.ft_on_transfer(
+            owner(),
+            U128(100),
+            serde_json::to_string(&FarmingDetails {
+                name: "test".to_string(),
+                start_date: U64(0),
+                end_date: U64(ONE_EPOCH_TS * 4),
+            })
+            .unwrap(),
+        );
+    }
 }
