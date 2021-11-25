@@ -14,7 +14,7 @@ pub const GAS_FOR_FT_TRANSFER: Gas = Gas(10_000_000_000_000);
 pub const GAS_FOR_RESOLVE_TRANSFER: Gas = Gas(20_000_000_000_000);
 /// Gas for calling `get_owner` method.
 pub const GAS_FOR_GET_OWNER: Gas = Gas(10_000_000_000_000);
-pub const GAS_LEFTOVERS: Gas = Gas(5_000_000_000_000);
+pub const GAS_LEFTOVERS: Gas = Gas(20_000_000_000_000);
 /// Get owner method on external contracts.
 pub const GET_OWNER_METHOD: &str = "get_owner_account_id";
 
@@ -191,13 +191,32 @@ impl StakingContract {
         }
     }
 
-    fn internal_claim(&mut self, token_id: &AccountId, account_id: &AccountId) -> Promise {
+    fn internal_user_token_deposit(
+        &mut self,
+        account_id: &AccountId,
+        token_id: &AccountId,
+        amount: Balance,
+    ) {
         let mut account = self.accounts.get(&account_id).expect("ERR_NO_ACCOUNT");
+        *account.amounts.entry(token_id.clone()).or_default() += amount;
+        self.accounts.insert(&account_id, &account);
+    }
+
+    fn internal_claim(
+        &mut self,
+        token_id: &AccountId,
+        claim_account_id: &AccountId,
+        send_account_id: &AccountId,
+    ) -> Promise {
+        let mut account = self
+            .accounts
+            .get(&claim_account_id)
+            .expect("ERR_NO_ACCOUNT");
         self.internal_distribute_all_rewards(&mut account);
         let amount = account.amounts.remove(&token_id).unwrap_or(0);
-        self.accounts.insert(&account_id, &account);
+        self.accounts.insert(&claim_account_id, &account);
         ext_fungible_token::ft_transfer(
-            account_id.clone(),
+            send_account_id.clone(),
             U128(amount),
             None,
             token_id.clone(),
@@ -206,7 +225,7 @@ impl StakingContract {
         )
         .then(ext_self::callback_post_withdraw_reward(
             token_id.clone(),
-            account_id.clone(),
+            send_account_id.clone(),
             U128(amount),
             env::current_account_id(),
             0,
@@ -220,35 +239,60 @@ impl StakingContract {
     pub fn callback_post_get_owner(
         &mut self,
         token_id: AccountId,
+        delegator_id: AccountId,
         account_id: AccountId,
     ) -> Promise {
         let owner_id = match env::promise_result(0) {
-            PromiseResult::Successful(result) => {
-                AccountId::new_unchecked(String::from_utf8(result).expect("Failed to parse"))
-            }
+            PromiseResult::Successful(result) => AccountId::new_unchecked(
+                near_sdk::serde_json::from_slice(&result).expect("Failed to parse"),
+            ),
             _ => panic!("get_owner MUST HAVE RESULT"),
         };
         assert_eq!(owner_id, account_id, "Caller is not an owner");
-        self.internal_claim(&token_id, &account_id)
+        self.internal_claim(&token_id, &delegator_id, &account_id)
+    }
+
+    /// Callback from depositing funds to the user's account.
+    /// If it failed, return funds to the user's account.
+    pub fn callback_post_withdraw_reward(
+        &mut self,
+        token_id: AccountId,
+        sender_id: AccountId,
+        amount: U128,
+    ) {
+        assert_eq!(
+            env::promise_results_count(),
+            1,
+            "ERR_CALLBACK_POST_WITHDRAW_INVALID",
+        );
+        match env::promise_result(0) {
+            PromiseResult::NotReady => unreachable!(),
+            PromiseResult::Successful(_) => {}
+            PromiseResult::Failed => {
+                // This reverts the changes from the claim function.
+                self.internal_user_token_deposit(&sender_id, &token_id, amount.0);
+            }
+        };
     }
 
     /// Claim given tokens for given account.
     /// If delegator is provided, it will call it's `get_owner` method to confirm that caller
     /// can execute on behalf of this contract.
-    pub fn claim(&mut self, token_id: AccountId, delegator: Option<AccountId>) -> Promise {
+    pub fn claim(&mut self, token_id: AccountId, delegator_id: Option<AccountId>) -> Promise {
         let account_id = env::predecessor_account_id();
-        if let Some(delegator) = delegator {
-            Promise::new(delegator)
+        if let Some(delegator_id) = delegator_id {
+            Promise::new(delegator_id.clone())
                 .function_call(GET_OWNER_METHOD.to_string(), vec![], 0, GAS_FOR_GET_OWNER)
                 .then(ext_self::callback_post_get_owner(
                     token_id,
+                    delegator_id,
                     account_id,
                     env::current_account_id(),
                     0,
                     env::prepaid_gas() - env::used_gas() - GAS_FOR_GET_OWNER - GAS_LEFTOVERS,
                 ))
         } else {
-            self.internal_claim(&token_id, &account_id)
+            self.internal_claim(&token_id, &account_id, &account_id)
         }
     }
 

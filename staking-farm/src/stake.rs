@@ -20,7 +20,12 @@ pub trait SelfContract {
     );
 
     /// Callback after getting the owner of the given account.
-    fn callback_post_get_owner(&mut self, token_id: AccountId, account_id: AccountId) -> Promise;
+    fn callback_post_get_owner(
+        &mut self,
+        token_id: AccountId,
+        delegator_id: AccountId,
+        account_id: AccountId,
+    ) -> Promise;
 }
 
 #[near_bindgen]

@@ -206,12 +206,14 @@ impl StakingContract {
         // NOTE: We need to subtract `attached_deposit` in case `ping` called from `deposit` call
         // since the attached deposit gets included in the `account_balance`, and we have not
         // accounted it yet.
-        let total_balance =
+        let mut total_balance =
             env::account_locked_balance() + env::account_balance() - env::attached_deposit();
 
         assert!(
             total_balance >= self.last_total_balance,
-            "The new total balance should not be less than the old total balance"
+            "The new total balance should not be less than the old total balance {} {}",
+            total_balance,
+            self.last_total_balance
         );
         let mut total_reward = total_balance - self.last_total_balance;
         if total_reward > 0 {
@@ -230,6 +232,7 @@ impl StakingContract {
 
             // All subsequent computations are done without part that is going to be burnt.
             total_reward -= burn_fee;
+            total_balance -= burn_fee;
 
             // The validation fee that the contract owner takes.
             let owners_fee = self.reward_fee_fraction.multiply(total_reward);
