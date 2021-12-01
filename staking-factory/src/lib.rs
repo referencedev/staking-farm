@@ -4,8 +4,8 @@ use near_sdk::json_types::{Base58CryptoHash, U128};
 use near_sdk::serde::{Deserialize, Serialize};
 use near_sdk::serde_json::json;
 use near_sdk::{
-    assert_self, env, ext_contract, is_promise_success, log, near_bindgen, sys, AccountId, Balance,
-    CryptoHash, PanicOnDefault, Promise, PromiseOrValue, PublicKey,
+    env, ext_contract, is_promise_success, log, near_bindgen, sys, AccountId, Balance, CryptoHash,
+    PanicOnDefault, Promise, PromiseOrValue, PublicKey,
 };
 
 /// The 30 NEAR tokens required for the storage of the staking pool.
@@ -200,14 +200,13 @@ impl StakingPoolFactory {
     /// Callback after a staking pool was created.
     /// Returns the promise to whitelist the staking pool contract if the pool creation succeeded.
     /// Otherwise refunds the attached deposit and returns `false`.
+    #[private]
     pub fn on_staking_pool_create(
         &mut self,
         staking_pool_account_id: AccountId,
         attached_deposit: U128,
         predecessor_account_id: AccountId,
     ) -> PromiseOrValue<bool> {
-        assert_self();
-
         let staking_pool_created = is_promise_success();
 
         if staking_pool_created {

@@ -1,7 +1,8 @@
 use near_contract_standards::fungible_token::core_impl::ext_fungible_token;
 use near_sdk::json_types::U64;
-use near_sdk::Timestamp;
+use near_sdk::{promise_result_as_success, Timestamp};
 
+use crate::internal::ZERO_ADDRESS;
 use crate::stake::ext_self;
 use crate::*;
 
@@ -145,9 +146,10 @@ impl StakingContract {
             .get(&farm_id)
             .cloned()
             .unwrap_or(U256::zero());
-        if let Some(distribution) =
-            self.internal_calculate_distribution(&farm, self.total_stake_shares)
-        {
+        if let Some(distribution) = self.internal_calculate_distribution(
+            &farm,
+            self.total_stake_shares - self.total_burn_shares,
+        ) {
             (
                 farm.last_distribution.rps,
                 (U256::from(account.stake_shares) * (distribution.rps - user_rps) / DENOMINATOR)
@@ -159,9 +161,10 @@ impl StakingContract {
     }
 
     fn internal_distribute(&mut self, farm: &mut Farm) {
-        if let Some(distribution) =
-            self.internal_calculate_distribution(&farm, self.total_stake_shares)
-        {
+        if let Some(distribution) = self.internal_calculate_distribution(
+            &farm,
+            self.total_stake_shares - self.total_burn_shares,
+        ) {
             if distribution.reward_round != farm.last_distribution.reward_round {
                 farm.last_distribution = distribution;
             }
@@ -236,43 +239,35 @@ impl StakingContract {
 
 #[near_bindgen]
 impl StakingContract {
+    /// Callback after checking owner for the delegated claim.
+    #[private]
     pub fn callback_post_get_owner(
         &mut self,
         token_id: AccountId,
         delegator_id: AccountId,
         account_id: AccountId,
     ) -> Promise {
-        let owner_id = match env::promise_result(0) {
-            PromiseResult::Successful(result) => AccountId::new_unchecked(
-                near_sdk::serde_json::from_slice(&result).expect("Failed to parse"),
-            ),
-            _ => panic!("get_owner MUST HAVE RESULT"),
-        };
+        let owner_id: AccountId = near_sdk::serde_json::from_slice(
+            &promise_result_as_success().expect("get_owner must have result"),
+        )
+        .expect("Failed to parse");
         assert_eq!(owner_id, account_id, "Caller is not an owner");
         self.internal_claim(&token_id, &delegator_id, &account_id)
     }
 
     /// Callback from depositing funds to the user's account.
     /// If it failed, return funds to the user's account.
+    #[private]
     pub fn callback_post_withdraw_reward(
         &mut self,
         token_id: AccountId,
         sender_id: AccountId,
         amount: U128,
     ) {
-        assert_eq!(
-            env::promise_results_count(),
-            1,
-            "ERR_CALLBACK_POST_WITHDRAW_INVALID",
-        );
-        match env::promise_result(0) {
-            PromiseResult::NotReady => unreachable!(),
-            PromiseResult::Successful(_) => {}
-            PromiseResult::Failed => {
-                // This reverts the changes from the claim function.
-                self.internal_user_token_deposit(&sender_id, &token_id, amount.0);
-            }
-        };
+        if promise_result_as_success().is_none() {
+            // This reverts the changes from the claim function.
+            self.internal_user_token_deposit(&sender_id, &token_id, amount.0);
+        }
     }
 
     /// Claim given tokens for given account.
@@ -307,6 +302,9 @@ impl StakingContract {
     }
 
     pub fn get_unclaimed_reward(&self, account_id: AccountId, farm_id: u64) -> U128 {
+        if account_id == AccountId::new_unchecked(ZERO_ADDRESS.to_string()) {
+            return U128(0);
+        }
         let account = self.accounts.get(&account_id).expect("ERR_NO_ACCOUNT");
         let farm = self.farms.get(farm_id).expect("ERR_NO_FARM");
         let (_rps, reward) = self.internal_unclaimed_balance(&account, farm_id, &farm);

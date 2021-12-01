@@ -1,4 +1,5 @@
 use crate::account::HumanReadableAccount;
+use crate::internal::{MIN_BURN_AMOUNT, ZERO_ADDRESS};
 use crate::*;
 
 /// Interface for the contract itself.
@@ -60,7 +61,7 @@ impl StakingContract {
 
         let account_id = env::predecessor_account_id();
         let account = self.internal_get_account(&account_id);
-        self.internal_withdraw(account.unstaked);
+        self.internal_withdraw(&account_id, account.unstaked);
 
         if need_to_restake {
             self.internal_restake();
@@ -73,7 +74,7 @@ impl StakingContract {
         let need_to_restake = self.internal_ping();
 
         let amount: Balance = amount.into();
-        self.internal_withdraw(amount);
+        self.internal_withdraw(&env::predecessor_account_id(), amount);
 
         if need_to_restake {
             self.internal_restake();
@@ -107,15 +108,7 @@ impl StakingContract {
     /// Unstakes all staked balance from the inner account of the predecessor.
     /// The new total unstaked balance will be available for withdrawal in four epochs.
     pub fn unstake_all(&mut self) {
-        // Unstake action always restakes
-        self.internal_ping();
-
-        let account_id = env::predecessor_account_id();
-        let account = self.internal_get_account(&account_id);
-        let amount = self.staked_amount_from_num_shares_rounded_down(account.stake_shares);
-        self.inner_unstake(amount);
-
-        self.internal_restake();
+        self.internal_unstake_all(&env::predecessor_account_id());
     }
 
     /// Unstakes the given amount from the inner account of the predecessor.
@@ -126,9 +119,24 @@ impl StakingContract {
         self.internal_ping();
 
         let amount: Balance = amount.into();
-        self.inner_unstake(amount);
+        self.inner_unstake(&env::predecessor_account_id(), amount);
 
         self.internal_restake();
+    }
+
+    /// Unstakes all the tokens that must be burnt.
+    pub fn unstake_burn(&mut self) {
+        self.internal_unstake_all(&AccountId::new_unchecked(ZERO_ADDRESS.to_string()));
+    }
+
+    /// Burns all the tokens that are unstaked.
+    pub fn burn(&mut self) {
+        let account_id = AccountId::new_unchecked(ZERO_ADDRESS.to_string());
+        let account = self.internal_get_account(&account_id);
+        if account.unstaked > MIN_BURN_AMOUNT {
+            // TODO: replace with burn host function when available.
+            self.internal_withdraw(&account_id, account.unstaked);
+        }
     }
 
     /****************/

@@ -16,6 +16,7 @@ const STAKING_KEY: &str = "KuTCtARNzxZQ3YvXDeLjx83FDqxv2SdQTSbiq876zR7";
 const ONE_SEC_IN_NS: u64 = 1_000_000_000;
 const WHITELIST_ACCOUNT_ID: &str = "whitelist";
 const LOCKUP_ACCOUNT_ID: &str = "lockup";
+const ZERO_ADDRESS: &str = "0000000000000000000000000000000000000000000000000000000000000000";
 
 near_sdk_sim::lazy_static_include::lazy_static_include_bytes! {
     STAKING_FARM_BYTES => "../res/staking_farm_local.wasm",
@@ -30,6 +31,10 @@ fn token_id() -> AccountId {
 
 fn lockup_id() -> AccountId {
     AccountId::new_unchecked(LOCKUP_ACCOUNT_ID.to_string())
+}
+
+fn burn_account() -> AccountId {
+    AccountId::new_unchecked(ZERO_ADDRESS.to_string())
 }
 
 fn wait_epoch(user: &UserAccount) {
@@ -53,7 +58,7 @@ fn assert_all_success(result: ExecutionResult) {
         all_results = format!("{}\n{:?}", all_results, x);
         all_success &= x.is_ok();
     }
-    println!("{}", all_results);
+    println!("{:?}", result.promise_results());
     assert!(
         all_success,
         "Not all promises where successful: \n\n{}",
@@ -214,13 +219,19 @@ fn test_farm_with_lockup() {
     // Check that out of 1000 reward, 300 has burnt, 10% went to root, leaving ~630.
     assert_between(
         to_int(view!(pool.get_account_total_balance(root.account_id()))),
-        "69",
         "71",
+        "72",
     );
     assert_between(
         to_int(view!(pool.get_account_total_balance(user1.account_id()))),
-        "10629",
-        "10630",
+        "10627",
+        "10628",
+    );
+    // Burn balance still staked.
+    assert_between(
+        to_int(view!(pool.get_account_total_balance(burn_account()))),
+        "299",
+        "300",
     );
 
     deploy_farm(&root);
@@ -248,19 +259,23 @@ fn test_farm_with_lockup() {
     // Because root received already it's reward from staking as pool owner and also participates in farming.
     assert_between(
         to_int(view!(pool.get_unclaimed_reward(user1.account_id(), 0))),
+        "49639",
         "49640",
-        "49650",
     );
     assert_between(
         to_int(view!(pool.get_unclaimed_reward(root.account_id(), 0))),
-        "325",
-        "327",
+        "336",
+        "337",
+    );
+    assert_eq!(
+        to_int(view!(pool.get_unclaimed_reward(burn_account(), 0))),
+        0
     );
 
     // Claim balance by user.
     assert_all_success(call!(user1, pool.claim(token_id(), None)));
     let claimed = balance_of(&root, user1.account_id());
-    assert_between(claimed, "49640", "49650");
+    assert_between(claimed, "49639", "49640");
 
     assert_all_success(call!(root, pool.ping()));
 
@@ -278,14 +293,32 @@ fn test_farm_with_lockup() {
         json!({ "amount": to_yocto("10000").to_string() }),
         0,
     );
+    println!(
+        "{:?}",
+        root.borrow_runtime().view_account(STAKING_POOL_ACCOUNT_ID)
+    );
     assert_all_success(call!(root, pool.ping()));
 
     // Deploy second farm with new period.
     deploy_farm(&root);
 
+    // Unstake burnt tokens.
+    assert_all_success(call!(root, pool.unstake_burn()));
+
     for _ in 0..5 {
         root.borrow_runtime_mut().produce_block().unwrap();
     }
+
+    // Note: an actual unstaking doesn't work in simulation framework,
+    // which means locked balance needs to be updated manually.
+    let mut account = root
+        .borrow_runtime()
+        .view_account(STAKING_POOL_ACCOUNT_ID)
+        .unwrap();
+    account.amount += to_yocto("300");
+    account.locked -= to_yocto("300");
+    root.borrow_runtime_mut()
+        .force_account_update(pool.account_id(), &account);
 
     assert_between(
         to_int(view!(pool.get_unclaimed_reward(lockup_id(), 1))),
@@ -313,5 +346,18 @@ fn test_farm_with_lockup() {
     assert_all_success(call!(root, pool.claim(token_id(), None)));
 
     let claimed3 = balance_of(&root, root.account_id());
-    assert_between(claimed3 - claimed2, "495", "496");
+    assert_between(claimed3 - claimed2, "509", "510");
+
+    // Actually send to burn the tokens.
+    assert_all_success(call!(root, pool.burn()));
+
+    // Burn was 30% of 1000.
+    assert_between(
+        root.borrow_runtime()
+            .view_account(&burn_account().as_str())
+            .unwrap()
+            .amount,
+        "299",
+        "300",
+    );
 }

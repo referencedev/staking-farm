@@ -45,6 +45,17 @@ construct_uint! {
 /// updated in the previous epoch. It will not unlock the funds for 4 epochs.
 const NUM_EPOCHS_TO_UNLOCK: EpochHeight = 4;
 
+/// Tracking balance for burning.
+#[derive(BorshDeserialize, BorshSerialize)]
+pub struct BurnInfo {
+    /// The unstaked balance that can be burnt.
+    pub unstaked: Balance,
+    /// Number of "stake" shares that must be burnt.
+    pub stake_shares: Balance,
+    /// The minimum epoch height when the burn is allowed.
+    pub unstaked_available_epoch_height: EpochHeight,
+}
+
 #[near_bindgen]
 #[derive(BorshDeserialize, BorshSerialize)]
 pub struct StakingContract {
@@ -60,6 +71,9 @@ pub struct StakingContract {
     pub total_stake_shares: NumStakeShares,
     /// The total staked balance.
     pub total_staked_balance: Balance,
+    /// The total burn share balance, that will not be accounted in the farming.
+    pub total_burn_shares: NumStakeShares,
+    /// The total amount to burn that will be available
     /// The fraction of the reward that goes to the owner of the staking pool for running the
     /// validator node.
     pub reward_fee_fraction: Ratio,
@@ -147,6 +161,7 @@ impl StakingContract {
             last_total_balance: account_balance,
             total_staked_balance,
             total_stake_shares: NumStakeShares::from(total_staked_balance),
+            total_burn_shares: 0,
             reward_fee_fraction,
             burn_fee_fraction,
             accounts: UnorderedMap::new(b"u".to_vec()),

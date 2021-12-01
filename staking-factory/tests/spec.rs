@@ -100,11 +100,12 @@ fn create_staking_pool(
             code_hash,
             user.account_id(),
             STAKING_KEY.parse().unwrap(),
-            fee,
+            fee
         ),
         deposit = to_yocto(POOL_DEPOSIT)
     )
 }
+
 pub fn should_fail(r: ExecutionResult) {
     match r.status() {
         ExecutionStatus::Failure(_) => {}
