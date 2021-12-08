@@ -30,9 +30,9 @@ You need:
   2. NEAR CLI: https://github.com/near/near-cli#Installation
   3. Go: https://go.dev/doc/install
   4. Install the nearkey tool:\
-  `$ go install github.com/aurora-is-near/near-api-go/tools/cmd/nearkey@tools`\
+  `$ go install github.com/aurora-is-near/near-api-go/tools/cmd/nearkey`\
   6. Install the nearcall tool (only if you are deploying the whitelist and factory contracts):\
-  `$ go install github.com/aurora-is-near/near-api-go/tools/cmd/nearcall@tools`\
+  `$ go install github.com/aurora-is-near/near-api-go/tools/cmd/nearcall`\
   This tool allows you to call contract methods with arguments that are too long for the near cli.
   7. Rust (only if you are deploying the whitelist and factory contracts):\
   `$ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`\
