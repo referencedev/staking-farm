@@ -157,7 +157,7 @@ The prerequisites for actually deploying a Stake&Farm contract are now in place.
   6. Copy the public_key from the validator_key.json file and make it publicly available:\
   `$ export VALIDATORKEY="ed25519:eSNAthKiUM1kNFifPDCt6U83Abnak4dCRbhUeNGA9j7"`
   7. Finally, call the factory to create the new stake&farm contract:\
-  `$ near --accountId ${OWNERACC} call ${FACTORY} create_staking_pool '{ "staking_pool_id":"'${VALIDATORNAME}'", "code_hash":"'${CONTRACTHASH}'","reward_fee_fraction": {"numerator": 10, "denominator": 100}}' --amount 30 --gas 300000000000000`\
+  `$ near --accountId ${OWNERACC} call ${FACTORY} create_staking_pool '{ "staking_pool_id":"'${VALIDATORNAME}'", "code_hash":"'${CONTRACTHASH}'",  "stake_public_key":"'${VALIDATORKEY}'", "reward_fee_fraction": {"numerator": 10, "denominator": 100}}' --amount 30 --gas 300000000000000`\
   This deploys the staking contract owned by OWNERACC and keeping 10/100 (numerator/denominator) of rewards for itself while distributing the remainder to stake-holders.
   8. Make the name of the new contract globally available:\
   `$ export STAKINGCONTRACT=${VALIDATORNAME}.${FACTORY}`
