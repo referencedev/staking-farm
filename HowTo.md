@@ -195,8 +195,9 @@ Now that we have tokens to farm, we need to transfer some of them to the stake&f
   2. Calculate the time range for the farm:\
   `$ export STARTIN=360` Start farm in 360 seconds.\
   `$ export DURATION=3600` Run the farm for 3600 seconds.\
-  `$ export STARTDATE=$(expr $(date +%s) + ${STARTIN})"000000000"` Calculate the unix nanosecond timestamp at which to start farming.\
+  `$ export STARTDATE=$(expr $(date +%s) + ${STARTIN})` Calculate the unix timestamp at which to start farming.\
   `$ export ENDDATE=$(expr ${STARTDATE} + ${DURATION})"000000000"` Calculate the unix nanosecond timestamp at which to end farming.\
+  `$ export STARTDATE=${STARTDATE}"000000000"` Make startdate nanoseconds.
   3. Create the farm in the stake&farm contract by transferring tokens to it:\
   `$ near call token.${OWNERACC} ft_transfer_call '{"receiver_id": "'${STAKINGCONTRACT}'", "amount": "10000000000000", "msg": "{\"name\": \"Example Token\", \"start_date\": \"'${STARTDATE}'\", \"end_date\": \"'${ENDDATE}'\" }"}' --accountId ${OWNERACC} --amount 0.000000000000000000000001 --gas 300000000000000`\
   The farm is now ready. Stake holders that have a stake in the contract between STARTDATE and ENDDATE will receive a share of the farmed tokens.
