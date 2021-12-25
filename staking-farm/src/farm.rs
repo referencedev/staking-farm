@@ -1,5 +1,5 @@
 use near_contract_standards::fungible_token::core_impl::ext_fungible_token;
-use near_sdk::{is_promise_success, promise_result_as_success, Timestamp};
+use near_sdk::{assert_one_yocto, is_promise_success, promise_result_as_success, Timestamp};
 
 use crate::stake::ext_self;
 use crate::*;
@@ -168,6 +168,10 @@ impl StakingContract {
             .last_farm_reward_per_share
             .insert(farm_id, new_user_rps);
         *account.amounts.entry(farm.token_id.clone()).or_default() += claim_amount;
+        env::log_str(&format!(
+            "Record {} {} reward from farm #{}",
+            claim_amount, farm.token_id, farm_id
+        ));
     }
 
     /// Distribute all rewards for the given user.
@@ -178,9 +182,10 @@ impl StakingContract {
             if let Some(mut farm) = self.farms.get(farm_id) {
                 self.internal_distribute_reward(&mut account, farm_id, &mut farm);
                 self.farms.replace(farm_id, &farm);
-                if farm.is_active() {
-                    self.active_farms.push(farm_id);
-                }
+                // TODO: currently all farms continue to be active.
+                // if farm.is_active() {
+                self.active_farms.push(farm_id);
+                // }
             }
         }
     }
@@ -191,9 +196,9 @@ impl StakingContract {
         token_id: &AccountId,
         amount: Balance,
     ) {
-        let mut account = self.accounts.get(&account_id).expect("ERR_NO_ACCOUNT");
+        let mut account = self.internal_get_account(&account_id);
         *account.amounts.entry(token_id.clone()).or_default() += amount;
-        self.accounts.insert(&account_id, &account);
+        self.internal_save_account(&account_id, &account);
     }
 
     fn internal_claim(
@@ -202,14 +207,15 @@ impl StakingContract {
         claim_account_id: &AccountId,
         send_account_id: &AccountId,
     ) -> Promise {
-        let mut account = self
-            .accounts
-            .get(&claim_account_id)
-            .expect("ERR_NO_ACCOUNT");
+        let mut account = self.internal_get_account(&claim_account_id);
         self.internal_distribute_all_rewards(&mut account);
         let amount = account.amounts.remove(&token_id).unwrap_or(0);
         assert!(amount > 0, "ERR_ZERO_AMOUNT");
-        self.accounts.insert(&claim_account_id, &account);
+        env::log_str(&format!(
+            "{} receives {} of {} from {}",
+            send_account_id, amount, token_id, claim_account_id
+        ));
+        self.internal_save_account(&claim_account_id, &account);
         ext_fungible_token::ft_transfer(
             send_account_id.clone(),
             U128(amount),
@@ -256,16 +262,23 @@ impl StakingContract {
         sender_id: AccountId,
         amount: U128,
     ) {
-        if is_promise_success() {
+        if !is_promise_success() {
             // This reverts the changes from the claim function.
             self.internal_user_token_deposit(&sender_id, &token_id, amount.0);
+            env::log_str(&format!(
+                "Returned {} {} to {}",
+                amount.0, token_id, sender_id
+            ));
         }
     }
 
     /// Claim given tokens for given account.
     /// If delegator is provided, it will call it's `get_owner` method to confirm that caller
     /// can execute on behalf of this contract.
+    /// - Requires one yoctoNEAR. To pass to the ft_transfer call and to guarantee the full access key.
+    #[payable]
     pub fn claim(&mut self, token_id: AccountId, delegator_id: Option<AccountId>) -> Promise {
+        assert_one_yocto();
         let account_id = env::predecessor_account_id();
         if let Some(delegator_id) = delegator_id {
             Promise::new(delegator_id.clone())

@@ -12,7 +12,7 @@ use uint::construct_uint;
 
 use crate::account::{Account, NumStakeShares};
 use crate::farm::Farm;
-pub use crate::views::HumanReadableFarm;
+pub use crate::views::{HumanReadableAccount, HumanReadableFarm};
 
 mod account;
 mod farm;
@@ -630,7 +630,7 @@ mod tests {
             ntoy(1) / 100,
         ));
 
-        emulator.update_context(alice(), 0);
+        emulator.update_context(alice(), 1);
         emulator.contract.claim(bob(), None);
         assert_eq!(emulator.contract.get_unclaimed_reward(alice(), 0).0, 0);
     }
