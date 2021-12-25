@@ -7,7 +7,8 @@ use near_sdk_sim::{
     ViewResult,
 };
 
-use staking_farm::{Ratio, StakingContractContract};
+use near_sdk_sim::num_rational::Rational;
+use staking_farm::{HumanReadableFarm, Ratio, StakingContractContract};
 
 type PoolContract = ContractAccount<StakingContractContract>;
 
@@ -92,8 +93,14 @@ fn storage_register(user: &UserAccount, account_id: AccountId) {
     );
 }
 
-fn setup() -> (UserAccount, PoolContract) {
+fn setup(reward_ratio: u32, burn_ratio: u32) -> (UserAccount, PoolContract) {
     let root = init_simulator(None);
+    // Disable contract rewards.
+    root.borrow_runtime_mut()
+        .genesis
+        .runtime_config
+        .transaction_costs
+        .burnt_gas_reward = Rational::new(0, 1);
     let whitelist = root.deploy_and_init(
         &WHITELIST_BYTES,
         AccountId::new_unchecked(WHITELIST_ACCOUNT_ID.to_string()),
@@ -126,11 +133,11 @@ fn setup() -> (UserAccount, PoolContract) {
         near_sdk_sim::DEFAULT_GAS,
     );
     let reward_ratio = Ratio {
-        numerator: 1,
+        numerator: reward_ratio,
         denominator: 10,
     };
     let burn_ratio = Ratio {
-        numerator: 3,
+        numerator: burn_ratio,
         denominator: 10,
     };
     let pool = deploy!(
@@ -138,7 +145,8 @@ fn setup() -> (UserAccount, PoolContract) {
         contract_id: STAKING_POOL_ACCOUNT_ID.to_string(),
         bytes: &STAKING_FARM_BYTES,
         signer_account: root,
-        deposit: to_yocto("5"),
+        // adding STAKE_SHARE_PRICE_GUARANTEE_FUND to remove this rounding issue from further calculations.
+        deposit: to_yocto("10000") + 1_000_000_000_000,
         init_method: new(root.account_id(), STAKING_KEY.parse().unwrap(), reward_ratio, burn_ratio)
     );
     assert_all_success(root.call(
@@ -153,6 +161,13 @@ fn setup() -> (UserAccount, PoolContract) {
         whitelist.account_id(),
         "add_staking_pool",
         json!({ "staking_pool_account_id": STAKING_POOL_ACCOUNT_ID }),
+        0,
+    );
+    call(
+        &root,
+        pool.account_id(),
+        "add_authorized_farm_token",
+        json!({ "token_id": token_id() }),
         0,
     );
     (root, pool)
@@ -197,12 +212,7 @@ fn balance_of(user: &UserAccount, account_id: AccountId) -> Balance {
     .0
 }
 
-/// Tests pool, depositing from regular account and lockup.
-/// Creating two farms, farming from them, claiming via delegated call.
-/// Additionally checks that 30% of rewards are burnt (sent 0x0)
-#[test]
-fn test_farm_with_lockup() {
-    let (root, pool) = setup();
+fn create_user_and_stake(root: &UserAccount, pool: &PoolContract) -> UserAccount {
     let user1 = root.create_user(
         AccountId::new_unchecked("user1".to_string()),
         to_yocto("100000"),
@@ -213,10 +223,74 @@ fn test_farm_with_lockup() {
         pool.deposit_and_stake(),
         deposit = to_yocto("10000")
     ));
+    user1
+}
+
+fn produce_blocks(root: &UserAccount, num_blocks: u32) {
+    for _ in 0..num_blocks {
+        root.borrow_runtime_mut().produce_block().unwrap();
+    }
+}
+
+/// Test clean calculations without rewards and burn.
+#[test]
+fn test_farm() {
+    let (root, pool) = setup(0, 0);
+    let user1 = create_user_and_stake(&root, &pool);
+    wait_epoch(&root);
+    assert_all_success(call!(root, pool.ping()));
+    assert_eq!(
+        to_int(view!(pool.get_account_total_balance(root.account_id()))),
+        0
+    );
+    // Half of rewards go to this user and half goes to no-one.
+    assert_eq!(
+        to_int(view!(pool.get_account_total_balance(user1.account_id()))),
+        to_yocto("10500")
+    );
+
+    deploy_farm(&root);
+    let active_farms = view!(pool.get_active_farms()).unwrap_json::<Vec<HumanReadableFarm>>();
+    assert_eq!(active_farms.len(), 1);
+
+    assert_eq!(
+        to_int(view!(pool.get_unclaimed_reward(user1.account_id(), 0))),
+        to_yocto("10000"),
+    );
+
+    produce_blocks(&root, 1);
+
+    assert_eq!(
+        to_int(view!(pool.get_unclaimed_reward(user1.account_id(), 0))),
+        to_yocto("15000"),
+    );
+
+    produce_blocks(&root, 2);
+
+    assert_eq!(
+        to_int(view!(pool.get_unclaimed_reward(user1.account_id(), 0))),
+        to_yocto("25000"),
+    );
+
+    assert_all_success(call!(user1, pool.claim(token_id(), None)));
+    assert_eq!(balance_of(&root, user1.account_id()), to_yocto("25000"));
+
+    // let active_farms = view!(pool.get_active_farms()).unwrap_json::<Vec<HumanReadableFarm>>();
+    // assert_eq!(active_farms.len(), 0);
+}
+
+/// Tests pool, depositing from regular account and lockup.
+/// Creating two farms, farming from them, claiming via delegated call.
+/// Additionally checks that 30% of rewards are burnt (sent 0x0)
+#[test]
+fn test_farm_with_lockup() {
+    let (root, pool) = setup(1, 3);
+
+    let user1 = create_user_and_stake(&root, &pool);
     wait_epoch(&root);
     assert_all_success(call!(root, pool.ping()));
 
-    // Check that out of 1000 reward, 300 has burnt, 10% went to root, leaving ~630.
+    // Check that out of 1000 reward, 300 has burnt, 10% went to root, 50% went to "no-one", leaving ~315.
     assert_between(
         to_int(view!(pool.get_account_total_balance(root.account_id()))),
         "71",
@@ -224,8 +298,8 @@ fn test_farm_with_lockup() {
     );
     assert_between(
         to_int(view!(pool.get_account_total_balance(user1.account_id()))),
-        "10627",
-        "10628",
+        "10314",
+        "10315",
     );
     // Burn balance still staked.
     assert_between(
@@ -238,16 +312,16 @@ fn test_farm_with_lockup() {
 
     assert_between(
         to_int(view!(pool.get_unclaimed_reward(user1.account_id(), 0))),
-        "19000",
-        "20000",
+        "9900",
+        "10000",
     );
 
-    root.borrow_runtime_mut().produce_block().unwrap();
+    produce_blocks(&root, 1);
 
     assert_between(
         to_int(view!(pool.get_unclaimed_reward(user1.account_id(), 0))),
-        "29000",
-        "30000",
+        "14900",
+        "15000",
     );
 
     for _ in 0..2 {
@@ -259,8 +333,8 @@ fn test_farm_with_lockup() {
     // Because root received already it's reward from staking as pool owner and also participates in farming.
     assert_between(
         to_int(view!(pool.get_unclaimed_reward(user1.account_id(), 0))),
-        "49639",
-        "49640",
+        "24914",
+        "24915",
     );
     assert_between(
         to_int(view!(pool.get_unclaimed_reward(root.account_id(), 0))),
@@ -305,9 +379,7 @@ fn test_farm_with_lockup() {
     // Unstake burnt tokens.
     assert_all_success(call!(root, pool.unstake_burn()));
 
-    for _ in 0..5 {
-        root.borrow_runtime_mut().produce_block().unwrap();
-    }
+    produce_blocks(&root, 5);
 
     // Note: an actual unstaking doesn't work in simulation framework,
     // which means locked balance needs to be updated manually.

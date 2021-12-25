@@ -21,7 +21,6 @@ impl FungibleTokenReceiver for StakingContract {
     /// Callback on receiving tokens by this contract.
     /// transfer reward token with specific msg indicate
     /// which farm to be deposited to.
-    #[allow(unused_variables)]
     fn ft_on_transfer(
         &mut self,
         sender_id: AccountId,
@@ -29,9 +28,18 @@ impl FungibleTokenReceiver for StakingContract {
         msg: String,
     ) -> PromiseOrValue<U128> {
         assert!(
+            self.authorized_farm_tokens
+                .contains(&env::predecessor_account_id()),
+            "ERR_NOT_AUTHORIZED_TOKEN"
+        );
+        assert!(
             sender_id == StakingContract::get_owner_id()
                 || self.authorized_users.contains(&sender_id),
             "ERR_NOT_AUTHORIZED_USER"
+        );
+        assert!(
+            self.active_farms.len() <= MAX_NUM_ACTIVE_FARMS,
+            "ERR_TOO_MANY_ACTIVE_FARMS"
         );
         let message = serde_json::from_str::<FarmingDetails>(&msg).expect("ERR_MSG_WRONG_FORMAT");
         self.internal_deposit_farm_tokens(

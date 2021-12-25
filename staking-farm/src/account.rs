@@ -1,8 +1,6 @@
 use std::collections::HashMap;
 
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
-use near_sdk::json_types::U128;
-use near_sdk::serde::{Deserialize, Serialize};
 use near_sdk::{AccountId, Balance, EpochHeight};
 
 use crate::U256;
@@ -24,23 +22,10 @@ pub struct Account {
     /// The minimum epoch height when the withdrawn is allowed.
     /// This changes after unstaking action, because the amount is still locked for 3 epochs.
     pub unstaked_available_epoch_height: EpochHeight,
-    /// Last claimed for each farm.
-    pub user_rps: HashMap<u64, U256>,
-    /// Farmed tokens.
+    /// Last claimed reward for each active farm.
+    pub last_farm_reward_per_share: HashMap<u64, U256>,
+    /// Farmed tokens withdrawn from the farm but not from the contract.
     pub amounts: HashMap<AccountId, Balance>,
-}
-
-/// Represents an account structure readable by humans.
-#[derive(Serialize, Deserialize)]
-#[serde(crate = "near_sdk::serde")]
-pub struct HumanReadableAccount {
-    pub account_id: AccountId,
-    /// The unstaked balance that can be withdrawn or staked.
-    pub unstaked_balance: U128,
-    /// The amount balance staked at the current "stake" share price.
-    pub staked_balance: U128,
-    /// Whether the unstaked balance is available for withdrawal now.
-    pub can_withdraw: bool,
 }
 
 impl Default for Account {
@@ -49,7 +34,7 @@ impl Default for Account {
             unstaked: 0,
             stake_shares: 0,
             unstaked_available_epoch_height: 0,
-            user_rps: HashMap::new(),
+            last_farm_reward_per_share: HashMap::new(),
             amounts: HashMap::new(),
         }
     }

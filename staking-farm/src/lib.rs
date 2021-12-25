@@ -1,18 +1,18 @@
-use std::collections::HashSet;
 use std::convert::TryInto;
 
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
-use near_sdk::collections::{UnorderedMap, Vector};
+use near_sdk::collections::{UnorderedMap, UnorderedSet, Vector};
 use near_sdk::json_types::U128;
 use near_sdk::serde::{Deserialize, Serialize};
 use near_sdk::{
-    env, ext_contract, near_bindgen, AccountId, Balance, EpochHeight, Gas, Promise, PromiseResult,
-    PublicKey,
+    env, ext_contract, near_bindgen, AccountId, Balance, BorshStorageKey, EpochHeight, Gas,
+    Promise, PromiseResult, PublicKey,
 };
 use uint::construct_uint;
 
 use crate::account::{Account, NumStakeShares};
 use crate::farm::Farm;
+pub use crate::views::HumanReadableFarm;
 
 mod account;
 mod farm;
@@ -22,6 +22,7 @@ mod stake;
 #[cfg(test)]
 mod test_utils;
 mod token_receiver;
+mod views;
 
 /// The amount of gas given to complete internal `on_stake_action` call.
 const ON_STAKE_ACTION_GAS: Gas = Gas(20_000_000_000_000);
@@ -33,17 +34,28 @@ const STAKE_SHARE_PRICE_GUARANTEE_FUND: Balance = 1_000_000_000_000;
 /// There is no deposit balance attached.
 const NO_DEPOSIT: Balance = 0;
 
-construct_uint! {
-    /// 256-bit unsigned integer.
-    #[derive(BorshSerialize, BorshDeserialize)]
-    pub struct U256(4);
-}
+/// Maximum number of active farms at one time.
+const MAX_NUM_ACTIVE_FARMS: usize = 3;
 
 /// The number of epochs required for the locked balance to become unlocked.
 /// NOTE: The actual number of epochs when the funds are unlocked is 3. But there is a corner case
 /// when the unstaking promise can arrive at the next epoch, while the inner state is already
 /// updated in the previous epoch. It will not unlock the funds for 4 epochs.
 const NUM_EPOCHS_TO_UNLOCK: EpochHeight = 4;
+
+construct_uint! {
+    /// 256-bit unsigned integer.
+    #[derive(BorshSerialize, BorshDeserialize)]
+    pub struct U256(4);
+}
+
+#[derive(BorshStorageKey, BorshSerialize)]
+pub enum StorageKeys {
+    Accounts,
+    Farms,
+    AuthorizedUsers,
+    AuthorizedFarmTokens,
+}
 
 /// Tracking balance for burning.
 #[derive(BorshDeserialize, BorshSerialize)]
@@ -83,6 +95,8 @@ pub struct StakingContract {
     pub accounts: UnorderedMap<AccountId, Account>,
     /// Farm tokens.
     pub farms: Vector<Farm>,
+    /// Active farms: indicies into `farms`.
+    pub active_farms: Vec<u64>,
     /// Whether the staking is paused.
     /// When paused, the account unstakes everything (stakes 0) and doesn't restake.
     /// It doesn't affect the staking shares or reward distribution.
@@ -92,7 +106,10 @@ pub struct StakingContract {
     /// Authorized users, allowed to add farms.
     /// This is done to prevent farm spam with random tokens.
     /// Should not be a large number.
-    pub authorized_users: HashSet<AccountId>,
+    pub authorized_users: UnorderedSet<AccountId>,
+    /// Authorized tokens for farms.
+    /// Required because any contract can call method with ft_transfer_call, so must verify that contract will accept it.
+    pub authorized_farm_tokens: UnorderedSet<AccountId>,
 }
 
 impl Default for StakingContract {
@@ -164,14 +181,26 @@ impl StakingContract {
             total_burn_shares: 0,
             reward_fee_fraction,
             burn_fee_fraction,
-            accounts: UnorderedMap::new(b"u".to_vec()),
-            farms: Vector::new(b"v".to_vec()),
+            accounts: UnorderedMap::new(StorageKeys::Accounts),
+            farms: Vector::new(StorageKeys::Farms),
+            active_farms: Vec::new(),
             paused: false,
-            authorized_users: HashSet::new(),
+            authorized_users: UnorderedSet::new(StorageKeys::AuthorizedUsers),
+            authorized_farm_tokens: UnorderedSet::new(StorageKeys::AuthorizedFarmTokens),
         };
         Self::internal_set_owner(&owner_id);
         Self::internal_set_factory(&env::predecessor_account_id());
         Self::internal_set_version();
+        // this.accounts.insert(
+        //     &owner_id,
+        //     &Account {
+        //         unstaked: 0,
+        //         stake_shares: this.total_stake_shares,
+        //         unstaked_available_epoch_height: env::epoch_height(),
+        //         user_rps: HashMap::new(),
+        //         amounts: HashMap::new(),
+        //     },
+        // );
         // Staking with the current pool to make sure the staking key is valid.
         this.internal_restake();
         this
@@ -545,17 +574,9 @@ mod tests {
                 .unwrap(),
             zero_fee(),
         );
-        emulator.update_context(bob(), 0);
-        emulator.contract.ft_on_transfer(
-            owner(),
-            U128(ntoy(100)),
-            serde_json::to_string(&FarmingDetails {
-                name: "test".to_string(),
-                start_date: U64(0),
-                end_date: U64(ONE_EPOCH_TS * 4),
-            })
-            .unwrap(),
-        );
+        emulator.update_context(owner(), 0);
+        emulator.contract.add_authorized_farm_token(&bob());
+        add_farm(&mut emulator, ntoy(100));
 
         emulator.deposit_and_stake(alice(), ntoy(1_000_000));
 
@@ -614,6 +635,33 @@ mod tests {
         assert_eq!(emulator.contract.get_unclaimed_reward(alice(), 0).0, 0);
     }
 
+    fn add_farm(emulator: &mut Emulator, amount: Balance) {
+        emulator.update_context(bob(), 0);
+        emulator.contract.ft_on_transfer(
+            owner(),
+            U128(amount),
+            serde_json::to_string(&FarmingDetails {
+                name: "test".to_string(),
+                start_date: U64(0),
+                end_date: U64(ONE_EPOCH_TS * 4),
+            })
+            .unwrap(),
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "ERR_NOT_AUTHORIZED_TOKEN")]
+    fn test_farm_not_authorized_token() {
+        let mut emulator = Emulator::new(
+            owner(),
+            "KuTCtARNzxZQ3YvXDeLjx83FDqxv2SdQTSbiq876zR7"
+                .parse()
+                .unwrap(),
+            zero_fee(),
+        );
+        add_farm(&mut emulator, ntoy(100));
+    }
+
     #[test]
     #[should_panic(expected = "ERR_FARM_AMOUNT_TOO_SMALL")]
     fn test_farm_too_small_amount() {
@@ -624,16 +672,8 @@ mod tests {
                 .unwrap(),
             zero_fee(),
         );
-        emulator.update_context(bob(), 0);
-        emulator.contract.ft_on_transfer(
-            owner(),
-            U128(100),
-            serde_json::to_string(&FarmingDetails {
-                name: "test".to_string(),
-                start_date: U64(0),
-                end_date: U64(ONE_EPOCH_TS * 4),
-            })
-            .unwrap(),
-        );
+        emulator.update_context(owner(), 0);
+        emulator.contract.add_authorized_farm_token(&bob());
+        add_farm(&mut emulator, 100);
     }
 }

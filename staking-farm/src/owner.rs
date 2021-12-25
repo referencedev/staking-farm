@@ -1,11 +1,11 @@
-use crate::*;
-
 use near_sdk::sys;
 use near_sdk::sys::{promise_batch_action_function_call, promise_batch_then};
 
-const OWNER_KEY: &[u8; 5] = b"OWNER";
-const FACTORY_KEY: &[u8; 7] = b"FACTORY";
-const VERSION_KEY: &[u8; 7] = b"VERSION";
+use crate::*;
+
+pub const OWNER_KEY: &[u8; 5] = b"OWNER";
+pub const FACTORY_KEY: &[u8; 7] = b"FACTORY";
+pub const VERSION_KEY: &[u8; 7] = b"VERSION";
 const GET_CODE_METHOD_NAME: &[u8; 8] = b"get_code";
 const GET_CODE_GAS: Gas = Gas(50_000_000_000_000);
 const SELF_UPGRADE_METHOD_NAME: &[u8; 6] = b"update";
@@ -22,11 +22,6 @@ const ERR_MUST_BE_SELF: &str = "Can only be called by contract itself";
 ///*******************/
 #[near_bindgen]
 impl StakingContract {
-    /// Returns current contract version.
-    pub fn get_version() -> String {
-        format!("{}:{}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"))
-    }
-
     /// Storing owner in a separate storage to avoid STATE corruption issues.
     /// Returns previous owner if it existed.
     pub(crate) fn internal_set_owner(owner_id: &AccountId) -> Option<AccountId> {
@@ -57,22 +52,6 @@ impl StakingContract {
             env::predecessor_account_id(),
             "MUST BE OWNER TO SET OWNER"
         );
-    }
-
-    /// Returns current owner from the storage.
-    pub fn get_owner_id() -> AccountId {
-        AccountId::new_unchecked(
-            String::from_utf8(env::storage_read(OWNER_KEY).expect("MUST HAVE OWNER"))
-                .expect("INTERNAL_FAIL"),
-        )
-    }
-
-    /// Returns current contract factory.
-    pub fn get_factory_id() -> AccountId {
-        AccountId::new_unchecked(
-            String::from_utf8(env::storage_read(FACTORY_KEY).expect("MUST HAVE FACTORY"))
-                .expect("INTERNAL_FAIL"),
-        )
     }
 
     /// Owner's method.
@@ -123,7 +102,7 @@ impl StakingContract {
     /// Add authorized user to the current contract.
     pub fn add_authorized_user(&mut self, account_id: AccountId) {
         self.assert_owner();
-        self.authorized_users.insert(account_id);
+        self.authorized_users.insert(&account_id);
     }
 
     /// Remove authorized user from the current contract.
@@ -132,8 +111,16 @@ impl StakingContract {
         self.authorized_users.remove(&account_id);
     }
 
-    pub fn get_authorized_users(&self) -> Vec<AccountId> {
-        self.authorized_users.iter().cloned().collect()
+    /// Add authorized token.
+    pub fn add_authorized_farm_token(&mut self, token_id: &AccountId) {
+        self.assert_owner_or_authorized_user();
+        self.authorized_farm_tokens.insert(&token_id);
+    }
+
+    /// Remove authorized token.
+    pub fn remove_authorized_farm_token(&mut self, token_id: &AccountId) {
+        self.assert_owner_or_authorized_user();
+        self.authorized_farm_tokens.remove(&token_id);
     }
 
     /// Asserts that the method was called by the owner.
@@ -143,6 +130,16 @@ impl StakingContract {
             StakingContract::get_owner_id(),
             "{}",
             ERR_MUST_BE_OWNER
+        );
+    }
+
+    /// Asserts that the method was called by the owner or authorized user.
+    pub(crate) fn assert_owner_or_authorized_user(&self) {
+        let account_id = env::predecessor_account_id();
+        assert!(
+            account_id == StakingContract::get_owner_id()
+                || self.authorized_users.contains(&account_id),
+            "ERR_NOT_AUTHORIZED_USER"
         );
     }
 }

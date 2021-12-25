@@ -1,5 +1,5 @@
-use crate::account::HumanReadableAccount;
 use crate::internal::{MIN_BURN_AMOUNT, ZERO_ADDRESS};
+use crate::views::HumanReadableAccount;
 use crate::*;
 
 /// Interface for the contract itself.
