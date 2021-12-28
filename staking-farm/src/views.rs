@@ -58,6 +58,8 @@ pub struct PoolSummary {
     /// The fraction of the reward that goes to the owner of the staking pool for running the
     /// validator node.
     pub reward_fee_fraction: Ratio,
+    /// If reward fee fraction is changing, this will be different from current.
+    pub next_reward_fee_fraction: Ratio,
     /// The fraction of the reward that gets burnt.
     pub burn_fee_fraction: Ratio,
     /// Active farms that affect stakers.
@@ -76,7 +78,8 @@ impl StakingContract {
         PoolSummary {
             owner: StakingContract::get_owner_id(),
             total_staked_balance: self.total_staked_balance,
-            reward_fee_fraction: self.reward_fee_fraction.clone(),
+            reward_fee_fraction: self.reward_fee_fraction.current().clone(),
+            next_reward_fee_fraction: self.reward_fee_fraction.next().clone(),
             burn_fee_fraction: self.burn_fee_fraction.clone(),
             farms: self.get_active_farms(),
         }
@@ -143,8 +146,8 @@ impl StakingContract {
             return U128(0);
         }
         let account = self.accounts.get(&account_id).expect("ERR_NO_ACCOUNT");
-        let farm = self.farms.get(farm_id).expect("ERR_NO_FARM");
-        let (_rps, reward) = self.internal_unclaimed_balance(&account, farm_id, &farm);
+        let mut farm = self.farms.get(farm_id).expect("ERR_NO_FARM");
+        let (_rps, reward) = self.internal_unclaimed_balance(&account, farm_id, &mut farm);
         let prev_reward = *account.amounts.get(&farm.token_id).unwrap_or(&0);
         U128(reward + prev_reward)
     }
@@ -183,7 +186,7 @@ impl StakingContract {
 
     /// Returns the current reward fee as a fraction.
     pub fn get_reward_fee_fraction(&self) -> Ratio {
-        self.reward_fee_fraction.clone()
+        self.reward_fee_fraction.current().clone()
     }
 
     /// Returns the staking public key

@@ -21,7 +21,7 @@ pub const GET_OWNER_METHOD: &str = "get_owner_account_id";
 pub struct RewardDistribution {
     pub undistributed: Balance,
     pub unclaimed: Balance,
-    pub reward_per_shard: U256,
+    pub reward_per_share: U256,
     pub reward_round: u64,
 }
 
@@ -66,7 +66,7 @@ impl StakingContract {
             last_distribution: RewardDistribution {
                 undistributed: amount,
                 unclaimed: 0,
-                reward_per_shard: U256::zero(),
+                reward_per_share: U256::zero(),
                 reward_round: 0,
             },
         });
@@ -110,9 +110,9 @@ impl StakingContract {
         distribution.unclaimed += reward_added;
         distribution.undistributed -= reward_added;
         if total_staked == 0 {
-            distribution.reward_per_shard = U256::zero();
+            distribution.reward_per_share = U256::zero();
         } else {
-            distribution.reward_per_shard = farm.last_distribution.reward_per_shard
+            distribution.reward_per_share = farm.last_distribution.reward_per_share
                 + U256::from(reward_added) * U256::from(DENOMINATOR) / U256::from(total_staked);
         }
         Some(distribution)
@@ -122,36 +122,28 @@ impl StakingContract {
         &self,
         account: &Account,
         farm_id: u64,
-        farm: &Farm,
+        farm: &mut Farm,
     ) -> (U256, Balance) {
-        let user_rps = account
-            .last_farm_reward_per_share
-            .get(&farm_id)
-            .cloned()
-            .unwrap_or(U256::zero());
-        if let Some(distribution) = self.internal_calculate_distribution(
-            &farm,
-            self.total_stake_shares - self.total_burn_shares,
-        ) {
-            (
-                farm.last_distribution.reward_per_shard,
-                (U256::from(account.stake_shares) * (distribution.reward_per_shard - user_rps)
-                    / DENOMINATOR)
-                    .as_u128(),
-            )
-        } else {
-            (U256::zero(), 0)
-        }
-    }
-
-    fn internal_distribute(&mut self, farm: &mut Farm) {
         if let Some(distribution) = self.internal_calculate_distribution(
             &farm,
             self.total_stake_shares - self.total_burn_shares,
         ) {
             if distribution.reward_round != farm.last_distribution.reward_round {
-                farm.last_distribution = distribution;
+                farm.last_distribution = distribution.clone();
             }
+            let user_rps = account
+                .last_farm_reward_per_share
+                .get(&farm_id)
+                .cloned()
+                .unwrap_or(U256::zero());
+            (
+                farm.last_distribution.reward_per_share,
+                (U256::from(account.stake_shares) * (distribution.reward_per_share - user_rps)
+                    / DENOMINATOR)
+                    .as_u128(),
+            )
+        } else {
+            (U256::zero(), 0)
         }
     }
 
@@ -161,9 +153,8 @@ impl StakingContract {
         farm_id: u64,
         mut farm: &mut Farm,
     ) {
-        self.internal_distribute(&mut farm);
         let (new_user_rps, claim_amount) =
-            self.internal_unclaimed_balance(&account, farm_id, &farm);
+            self.internal_unclaimed_balance(&account, farm_id, &mut farm);
         account
             .last_farm_reward_per_share
             .insert(farm_id, new_user_rps);
@@ -226,7 +217,8 @@ impl StakingContract {
         )
         .then(ext_self::callback_post_withdraw_reward(
             token_id.clone(),
-            send_account_id.clone(),
+            // Return funds to the account that was deducted from vs caller.
+            claim_account_id.clone(),
             U128(amount),
             env::current_account_id(),
             0,

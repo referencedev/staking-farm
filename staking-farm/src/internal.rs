@@ -244,7 +244,10 @@ impl StakingContract {
             let burn_fee = self.burn_fee_fraction.multiply(total_reward);
 
             // The validation fee that the contract owner takes.
-            let owners_fee = self.reward_fee_fraction.multiply(total_reward - burn_fee);
+            let owners_fee = self
+                .reward_fee_fraction
+                .current()
+                .multiply(total_reward - burn_fee);
 
             // Distributing the remaining reward to the delegators first.
             let remaining_reward = total_reward - owners_fee - burn_fee;

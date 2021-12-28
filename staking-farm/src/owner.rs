@@ -45,7 +45,7 @@ impl StakingContract {
     }
 
     /// Changes contract owner. Must be called by current owner.
-    pub fn set_owner_id(&self, owner_id: &AccountId) {
+    pub fn set_owner_id(owner_id: &AccountId) {
         let prev_owner = StakingContract::internal_set_owner(owner_id).expect("MUST HAVE OWNER");
         assert_eq!(
             prev_owner,
@@ -71,7 +71,7 @@ impl StakingContract {
         reward_fee_fraction.assert_valid();
 
         let need_to_restake = self.internal_ping();
-        self.reward_fee_fraction = reward_fee_fraction;
+        self.reward_fee_fraction.set(reward_fee_fraction);
         if need_to_restake {
             self.internal_restake();
         }
@@ -211,7 +211,11 @@ pub extern "C" fn update() {
     );
     unsafe {
         // Load code into register 0 result from the promise.
-        sys::promise_result(0, 0);
+        match sys::promise_result(0, 0) {
+            1 => {}
+            // Not ready or failed.
+            _ => env::panic_str("Failed to fetch the new code"),
+        };
         // Update current contract with code from register 0.
         let promise_id = sys::promise_batch_create(
             current_id.as_bytes().len() as _,

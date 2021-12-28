@@ -68,6 +68,44 @@ pub struct BurnInfo {
     pub unstaked_available_epoch_height: EpochHeight,
 }
 
+/// Updatable reward fee only after NUM_EPOCHS_TO_UNLOCK.
+#[derive(BorshDeserialize, BorshSerialize)]
+pub struct UpdatableRewardFee {
+    reward_fee_fraction: Ratio,
+    next_reward_fee_fraction: Ratio,
+    available_epoch_height: EpochHeight,
+}
+
+impl UpdatableRewardFee {
+    pub fn new(reward_fee_fraction: Ratio) -> Self {
+        Self {
+            reward_fee_fraction: reward_fee_fraction.clone(),
+            next_reward_fee_fraction: reward_fee_fraction,
+            available_epoch_height: 0,
+        }
+    }
+
+    pub fn current(&self) -> &Ratio {
+        if env::epoch_height() >= self.available_epoch_height {
+            &self.next_reward_fee_fraction
+        } else {
+            &self.reward_fee_fraction
+        }
+    }
+
+    pub fn next(&self) -> &Ratio {
+        &self.next_reward_fee_fraction
+    }
+
+    pub fn set(&mut self, next_reward_fee_fraction: Ratio) {
+        if env::epoch_height() >= self.available_epoch_height {
+            self.reward_fee_fraction = self.next_reward_fee_fraction.clone();
+        }
+        self.next_reward_fee_fraction = next_reward_fee_fraction;
+        self.available_epoch_height = env::epoch_height() + NUM_EPOCHS_TO_UNLOCK
+    }
+}
+
 #[near_bindgen]
 #[derive(BorshDeserialize, BorshSerialize)]
 pub struct StakingContract {
@@ -85,10 +123,10 @@ pub struct StakingContract {
     pub total_staked_balance: Balance,
     /// The total burn share balance, that will not be accounted in the farming.
     pub total_burn_shares: NumStakeShares,
-    /// The total amount to burn that will be available
+    /// The total amount to burn that will be available.
     /// The fraction of the reward that goes to the owner of the staking pool for running the
     /// validator node.
-    pub reward_fee_fraction: Ratio,
+    pub reward_fee_fraction: UpdatableRewardFee,
     /// The fraction of the reward that gets burnt.
     pub burn_fee_fraction: Ratio,
     /// Persistent map from an account ID to the corresponding account.
@@ -118,7 +156,7 @@ impl Default for StakingContract {
     }
 }
 
-#[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize, Clone)]
+#[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize, Clone, PartialEq, Debug)]
 #[serde(crate = "near_sdk::serde")]
 pub struct Ratio {
     pub numerator: u32,
@@ -179,7 +217,7 @@ impl StakingContract {
             total_staked_balance,
             total_stake_shares: NumStakeShares::from(total_staked_balance),
             total_burn_shares: 0,
-            reward_fee_fraction,
+            reward_fee_fraction: UpdatableRewardFee::new(reward_fee_fraction),
             burn_fee_fraction,
             accounts: UnorderedMap::new(StorageKeys::Accounts),
             farms: Vector::new(StorageKeys::Farms),
@@ -675,5 +713,48 @@ mod tests {
         emulator.update_context(owner(), 0);
         emulator.contract.add_authorized_farm_token(&bob());
         add_farm(&mut emulator, 100);
+    }
+
+    #[test]
+    fn test_change_reward_fee() {
+        let mut emulator = Emulator::new(
+            owner(),
+            "KuTCtARNzxZQ3YvXDeLjx83FDqxv2SdQTSbiq876zR7"
+                .parse()
+                .unwrap(),
+            zero_fee(),
+        );
+        assert_eq!(emulator.contract.get_reward_fee_fraction(), zero_fee());
+        emulator.update_context(owner(), 0);
+        let new_fee = Ratio {
+            numerator: 1,
+            denominator: 10,
+        };
+        emulator
+            .contract
+            .update_reward_fee_fraction(new_fee.clone());
+        // The fee is still the old one.
+        assert_eq!(emulator.contract.get_reward_fee_fraction(), zero_fee());
+        assert_eq!(
+            emulator
+                .contract
+                .get_pool_summary()
+                .next_reward_fee_fraction,
+            new_fee
+        );
+        emulator.skip_epochs(1);
+        assert_eq!(emulator.contract.get_reward_fee_fraction(), zero_fee());
+        emulator.skip_epochs(3);
+        assert_eq!(emulator.contract.get_reward_fee_fraction(), new_fee);
+        // Update once again.
+        let new_fee2 = Ratio {
+            numerator: 2,
+            denominator: 10,
+        };
+        emulator.update_context(owner(), 0);
+        emulator
+            .contract
+            .update_reward_fee_fraction(new_fee2.clone());
+        assert_eq!(emulator.contract.get_reward_fee_fraction(), new_fee);
     }
 }

@@ -29,6 +29,7 @@ pub fn yton(yocto_amount: Balance) -> Balance {
 
 /// Checks that two amount are within epsilon
 pub fn almost_equal(left: Balance, right: Balance, epsilon: Balance) -> bool {
+    println!("{} ~= {}", left, right);
     if left > right {
         (left - right) < epsilon
     } else {
