@@ -190,6 +190,7 @@ Let's create such a contract and use it for farming in our stake&farm contract:
 
 Now that we have tokens to farm, we need to transfer some of them to the stake&farm contract:
 
+  0. The specific token for the farm needs to be whitelisted: `near call ${STAKINGCONTRACT} add_authorized_farm_token '{"token_id": "token.${OWNERACC}"} --accountId ${OWNERACC}'`
   1. The stake&farm contract needs to be able to hold tokens in the token contract. This requires paying the token contract to create storage:\
   `$ near call token.${OWNERACC} storage_deposit '{"account_id": "'${STAKINGCONTRACT}'"}' --accountId ${OWNERACC} --amount 0.00125`
   2. Calculate the time range for the farm:\
