@@ -263,20 +263,16 @@ fn store_contract() {
         // Load input into register 0.
         sys::input(0);
         // Compute sha256 hash of register 0 and store in 1.
-        // TODO: Check it is safe to use MAX as value_len (Why using MAX? is it faster?)
         sys::sha256(u64::MAX as _, 0 as _, 1);
         // Check if such blob already stored.
         // TODO: this storage_has_key can be avoided, and instead the result of the storage_write can be checked to be 1
         //       ^ This is a small optimization for the happy path (when hash of the code doesn't exist)
         assert_eq!(
-            // TODO: Use 32 instead of MAX (sha256 will always by 32 bytes long)
             sys::storage_has_key(u64::MAX as _, 1 as _),
             0,
             "ERR_ALREADY_EXISTS"
         );
         // Store value of register 0 into key = register 1.
-        // TODO: Use 32 instead of MAX (sha256 will always by 32 bytes long) for key
-        // TODO: Check it is safe to use MAX as value_len
         // TODO: Potential collisions might be created if using the hash of the contract as the key without prefix
         //       For example, staking pools account ids, are stored on key: "s<NAME>.factory.near"
         //       <NAME> is selected such that the length of the key is 32 (possible) and only prefix and suffix of that key
@@ -310,6 +306,7 @@ fn create_contract(
     let staking_pool_account_id = staking_pool_account_id.as_bytes().to_vec();
     unsafe {
         // Check that such contract exists.
+        // TODO: This call can be avoided, if the key doesn't exist `storage_read` will return 0.
         assert_eq!(
             sys::storage_has_key(code_hash.len() as _, code_hash.as_ptr() as _),
             1,
