@@ -8,7 +8,7 @@ This allows to attract more capital to the validator while ensuring more robust 
 
 Because of storage and computational limitations, the contract can only store a fixed number of farms.
 To avoid farm spam, only authorized users can deposit tokens. 
-Owner of the contract can manager authorized users or can deposit farms itself.
+Owner of the contract can manage authorized users or can deposit farms itself.
 
 ## Create new farm
 
