@@ -391,9 +391,9 @@ pub extern "C" fn store() {
     store_contract();
     let storage_cost = (env::storage_usage() - prev_storage) as u128 * env::storage_byte_cost();
     assert!(
-        storage_cost >= env::attached_deposit(),
-        "Must at least deposit {} to store",
-        storage_cost
+        storage_cost <= env::attached_deposit(),
+        "Must at least deposit {}",
+        storage_cost,
     );
 }
 

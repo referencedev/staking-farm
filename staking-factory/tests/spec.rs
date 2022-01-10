@@ -69,6 +69,7 @@ fn setup_factory() -> (UserAccount, UserAccount, FactoryContract, Base58CryptoHa
             to_yocto("5"),
         )
         .unwrap_json::<Base58CryptoHash>();
+    call!(foundation, factory.allow_contract(hash)).assert_success();
     (root, foundation, factory, hash)
 }
 
@@ -210,6 +211,6 @@ fn test_get_code() {
     assert!(view!(factory.get_code([0u8; 32].into()))
         .unwrap_err()
         .to_string()
-        .find("Contract doesn't exist")
+        .find("Contract hash is not allowed")
         .is_some());
 }
