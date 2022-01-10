@@ -180,6 +180,11 @@ impl StakingPoolFactory {
         reward_fee_fraction.assert_valid();
 
         assert!(
+            self.is_contract_allowed(&code_hash),
+            "Contract hash is not allowed"
+        );
+
+        assert!(
             self.staking_pool_account_ids
                 .insert(&staking_pool_account_id),
             "The staking pool account ID already exists"
@@ -237,6 +242,10 @@ impl StakingPoolFactory {
 
     /// Returns code at the given hash.
     pub fn get_code(&self, code_hash: Base58CryptoHash) {
+        assert!(
+            self.is_contract_allowed(&code_hash),
+            "Contract hash is not allowed"
+        );
         let code_hash: CryptoHash = code_hash.into();
         unsafe {
             // Check that such contract exists.
@@ -250,6 +259,40 @@ impl StakingPoolFactory {
             // Return as value.
             sys::value_return(u64::MAX as _, 0 as _);
         }
+    }
+
+    /// Allow contract to be deployed. Only owner.
+    pub fn allow_contract(&mut self, code_hash: Base58CryptoHash) {
+        assert_eq!(
+            env::predecessor_account_id(),
+            self.owner_id,
+            "ERR_MUST_BE_OWNER"
+        );
+        env::storage_write(&Self::code_hash_to_key(&code_hash), &[]);
+    }
+
+    /// Disallow contract to be deployed. Only owner.
+    pub fn disallow_contract(&mut self, code_hash: Base58CryptoHash) {
+        assert_eq!(
+            env::predecessor_account_id(),
+            self.owner_id,
+            "ERR_MUST_BE_OWNER"
+        );
+        env::storage_remove(&Self::code_hash_to_key(&code_hash));
+    }
+
+    /// Is this contract allowed to be deployed.
+    pub fn is_contract_allowed(&self, code_hash: &Base58CryptoHash) -> bool {
+        env::storage_has_key(&Self::code_hash_to_key(code_hash))
+    }
+
+    /// Map code hash into a storage key.
+    fn code_hash_to_key(code_hash: &Base58CryptoHash) -> Vec<u8> {
+        format!(
+            "allow:{}",
+            near_sdk::serde_json::to_string(code_hash).unwrap()
+        )
+        .into_bytes()
     }
 }
 
@@ -339,17 +382,19 @@ fn create_contract(
     }
 }
 
-/// Store new staking contract. Only owner.
+/// Store new staking contract, caller must pay the storage costs.
+/// Returns base58 of the hash of the stored contract.
 #[no_mangle]
 pub extern "C" fn store() {
     env::setup_panic_hook();
-    let contract: StakingPoolFactory = env::state_read().expect("Contract is not initialized");
-    assert_eq!(
-        contract.owner_id,
-        env::predecessor_account_id(),
-        "Must be owner"
-    );
+    let prev_storage = env::storage_usage();
     store_contract();
+    let storage_cost = (env::storage_usage() - prev_storage) as u128 * env::storage_byte_cost();
+    assert!(
+        storage_cost >= env::attached_deposit(),
+        "Must at least deposit {} to store",
+        storage_cost
+    );
 }
 
 #[cfg(test)]
@@ -412,6 +457,8 @@ mod tests {
 
         let mut contract = StakingPoolFactory::new(account_near(), account_whitelist());
         let hash = add_staking_contract(&mut context);
+
+        contract.allow_contract(hash);
 
         context.input = vec![];
         context.is_view = true;
@@ -493,6 +540,8 @@ mod tests {
         let mut contract = StakingPoolFactory::new(account_near(), account_whitelist());
         let hash = add_staking_contract(&mut context);
 
+        contract.allow_contract(hash);
+
         context.is_view = true;
         testing_env!(context.clone());
         assert_eq!(contract.get_min_attached_balance().0, MIN_ATTACHED_BALANCE);
@@ -532,5 +581,23 @@ mod tests {
         context.is_view = true;
         testing_env!(context.clone());
         assert_eq!(contract.get_number_of_staking_pools_created(), 0);
+    }
+
+    #[test]
+    fn test_contract_disallow() {
+        let mut context = VMContextBuilder::new()
+            .current_account_id(account_factory())
+            .predecessor_account_id(account_near())
+            .build();
+        testing_env!(context.clone());
+
+        let mut contract = StakingPoolFactory::new(account_near(), account_whitelist());
+        let hash = add_staking_contract(&mut context);
+
+        assert!(!contract.is_contract_allowed(&hash));
+        contract.allow_contract(hash);
+        assert!(contract.is_contract_allowed(&hash));
+        contract.disallow_contract(hash);
+        assert!(!contract.is_contract_allowed(&hash));
     }
 }
