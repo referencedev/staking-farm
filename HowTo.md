@@ -122,10 +122,12 @@ The contract factory needs actual contracts that it can deploy:
   3. The compiled contract is located in ../res/staking_factory_local.wasm.\
   `$ cd ../res/`
   4. Deploying the contract into the factory requires the nearcall tool installed before:\
-  `$ nearcall -account ${MASTERACC} -contract factory.${MASTERACC} -args staking_farm_local.wasm`\
+  `$ near call -account ${MASTERACC} -contract factory.${MASTERACC} -args staking_farm_local.wasm`\
   This will return an "Argument hash" that is required for later, and success/failure information of the deployment call.\
   Make the argument hash globally available:\
   `$ export CONTRACTHASH=HxT6MrNC7...`
+  5. Whitelist the contract hash:\
+  `$ near call --accountId ${MASTERACC} call factory.${MASTERACC} allow_contract '{"code_hash": "'${CONTRACTHASH}'"}'`
   
 You can verify the previous call by:
 
