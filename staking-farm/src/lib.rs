@@ -229,6 +229,7 @@ impl StakingContract {
         Self::internal_set_owner(&owner_id);
         Self::internal_set_factory(&env::predecessor_account_id());
         Self::internal_set_version();
+        // TODO: Should this be removed
         // this.accounts.insert(
         //     &owner_id,
         //     &Account {
