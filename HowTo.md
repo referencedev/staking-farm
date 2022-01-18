@@ -252,7 +252,7 @@ token_id is "token.example.testnet" you will have to create storage like this:
 
 Afterwards you can claim your rewards:
 
-`$ near claim ${STAKINGCONTRACT} claim '{"account_id": "'${MYACCOUNT}'", "token_id": "token.example.testnet", "farm_id": 0}' --accountId ${OWNERACC} --gas 30000000000000`
+`$ near call ${STAKINGCONTRACT} claim '{"account_id": "'${MYACCOUNT}'", "token_id": "token.example.testnet", "farm_id": 0}' --accountId ${OWNERACC} --gas 30000000000000 --depositYocto 1`
 
 This will transfer the tokens earned from the first farm (farm_id:0) to your account. Please make sure that token_id and farm_id exactly match
 what was returned by the previous "get_farms" call.
