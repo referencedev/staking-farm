@@ -241,7 +241,7 @@ For more information, check [staking&delegation](https://docs.near.org/docs/deve
   `$ near view ${STAKINGCONTRACT} get_farms '{ "from_index": 0, "limit": 128 }'`
   2. For each farm, you can calculate how many tokens you earned. The following calls refer to "farm_id", which is the position of the farm in the list created by the previous call, starting with 0 (zero).\
   For example, the first farm of the contract:\
-  `$ near call ${STAKINGCONTRACT} get_unclaimed_reward '{"account_id":"'${MYACCOUNT}'", "farm_id":0}'`
+  `$ near view ${STAKINGCONTRACT} get_unclaimed_reward '{"account_id":"'${MYACCOUNT}'", "farm_id":0}'`
   3. If the result of the previous call is greater than zero, you have earned tokens! Here's how to withdraw them. 
 
 Each farm has a field "token_id" which refers to the fungible token contract that issued the tokens in the first place.
