@@ -59,7 +59,9 @@ fn assert_all_success(result: ExecutionResult) {
         all_results = format!("{}\n{:?}", all_results, x);
         all_success &= x.is_ok();
     }
-    // println!("{:?}", result.promise_results());
+    for promise_result in result.promise_results() {
+        println!("{:?}", promise_result.unwrap().outcome().logs);
+    }
     assert!(
         all_success,
         "Not all promises where successful: \n\n{}",
@@ -446,5 +448,41 @@ fn test_farm_with_lockup() {
             .amount,
         "299",
         "300",
+    );
+}
+
+#[test]
+fn test_all_rewards_no_burn() {
+    let (root, pool) = setup(to_yocto("5"), 10, 0);
+    assert_eq!(
+        to_int(view!(pool.get_account_total_balance(root.account_id()))),
+        to_yocto("0")
+    );
+    let user1 = create_user_and_stake(&root, &pool);
+    wait_epoch(&root);
+    assert_all_success(call!(root, pool.ping()));
+    assert_eq!(
+        to_int(view!(pool.get_account_total_balance(root.account_id()))),
+        to_yocto("1000")
+    );
+    assert_eq!(
+        to_int(view!(pool.get_account_total_balance(user1.account_id()))),
+        to_yocto("10000")
+    );
+}
+
+#[test]
+fn test_all_rewards_burn() {
+    let (root, pool) = setup(to_yocto("5"), 10, 1);
+    let user1 = create_user_and_stake(&root, &pool);
+    wait_epoch(&root);
+    assert_all_success(call!(root, pool.ping()));
+    assert_eq!(
+        to_int(view!(pool.get_account_total_balance(root.account_id()))),
+        to_yocto("900")
+    );
+    assert_eq!(
+        to_int(view!(pool.get_account_total_balance(user1.account_id()))),
+        to_yocto("10000")
     );
 }
