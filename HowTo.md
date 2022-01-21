@@ -252,7 +252,12 @@ token_id is "token.example.testnet" you will have to create storage like this:
 
 Afterwards you can claim your rewards:
 
-`$ near call ${STAKINGCONTRACT} claim '{"account_id": "'${MYACCOUNT}'", "token_id": "token.example.testnet", "farm_id": 0}' --accountId ${OWNERACC} --gas 100000000000000 --depositYocto 1`
+`$ near call ${STAKINGCONTRACT} claim '{"token_id": "token.example.testnet", "farm_id": 0}' --accountId ${OWNERACC} --gas 100000000000000 --depositYocto 1`
+
+Claim from lockup: 
+
+`$ near call ${STAKINGCONTRACT} claim '{"token_id": "token.example.testnet", "farm_id": 0, "delegator_id": "${LOCKUPACC}"}' --accountId ${OWNERACC} --gas 100000000000000 --depositYocto 1`
+where LOCKUPACC - your lockup account ending .lockup.near
 
 This will transfer the tokens earned from the first farm (farm_id:0) to your account. Please make sure that token_id and farm_id exactly match
 what was returned by the previous "get_farms" call.
