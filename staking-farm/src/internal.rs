@@ -255,14 +255,15 @@ impl StakingContract {
 
             // Now buying "stake" shares for the burn.
             let num_burn_shares = self.num_shares_from_staked_amount_rounded_down(burn_fee);
-            self.internal_add_shares(
-                &AccountId::new_unchecked(ZERO_ADDRESS.to_string()),
-                num_burn_shares,
-            );
             self.total_burn_shares += num_burn_shares;
 
             // Now buying "stake" shares for the contract owner at the new share price.
             let num_owner_shares = self.num_shares_from_staked_amount_rounded_down(owners_fee);
+
+            self.internal_add_shares(
+                &AccountId::new_unchecked(ZERO_ADDRESS.to_string()),
+                num_burn_shares,
+            );
             self.internal_add_shares(&StakingContract::get_owner_id(), num_owner_shares);
 
             // Increasing the total staked balance by the owners fee, no matter whether the owner
