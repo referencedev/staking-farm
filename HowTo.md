@@ -248,7 +248,7 @@ Each farm has a field "token_id" which refers to the fungible token contract tha
 It is important that you have storage in this contract to be able to receive tokens from it. For example, if the
 token_id is "token.example.testnet" you will have to create storage like this:
 
-`$ near call token.example.testnet storage_deposit '' --accountId ${OWNERACC} --amount 0.00125`
+`$ near call token.example.testnet storage_deposit '' --accountId ${OWNERACC} --amount 0.0125`
 
 Afterwards you can claim your rewards:
 
