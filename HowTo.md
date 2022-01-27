@@ -248,15 +248,15 @@ Each farm has a field "token_id" which refers to the fungible token contract tha
 It is important that you have storage in this contract to be able to receive tokens from it. For example, if the
 token_id is "token.example.testnet" you will have to create storage like this:
 
-`$ near call token.example.testnet storage_deposit '' --accountId ${OWNERACC} --amount 0.00125`
+`$ near call token.example.testnet storage_deposit '' --accountId ${OWNERACC} --amount 0.0125`
 
 Afterwards you can claim your rewards:
 
-`$ near call ${STAKINGCONTRACT} claim '{"token_id": "token.example.testnet", "farm_id": 0}' --accountId ${OWNERACC} --gas 100000000000000 --depositYocto 1`
+`$ near call ${STAKINGCONTRACT} claim '{"account_id": "'${MYACCOUNT}'"}' --accountId ${OWNERACC} --gas 100000000000000 --depositYocto 1`
 
 Claim from lockup: 
 
-`$ near call ${STAKINGCONTRACT} claim '{"token_id": "token.example.testnet", "farm_id": 0, "delegator_id": "${LOCKUPACC}"}' --accountId ${OWNERACC} --gas 100000000000000 --depositYocto 1`
+`$ near call ${STAKINGCONTRACT} claim '{"token_id": "token.example.testnet", "delegator_id": "${LOCKUPACC}"}' --accountId ${OWNERACC} --gas 100000000000000 --depositYocto 1`
 where LOCKUPACC - your lockup account ending .lockup.near
 
 This will transfer the tokens earned from the first farm (farm_id:0) to your account. Please make sure that token_id and farm_id exactly match
