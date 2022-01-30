@@ -229,16 +229,6 @@ impl StakingContract {
         Self::internal_set_owner(&owner_id);
         Self::internal_set_factory(&env::predecessor_account_id());
         Self::internal_set_version();
-        // this.accounts.insert(
-        //     &owner_id,
-        //     &Account {
-        //         unstaked: 0,
-        //         stake_shares: this.total_stake_shares,
-        //         unstaked_available_epoch_height: env::epoch_height(),
-        //         user_rps: HashMap::new(),
-        //         amounts: HashMap::new(),
-        //     },
-        // );
         // Staking with the current pool to make sure the staking key is valid.
         this.internal_restake();
         this
@@ -685,6 +675,37 @@ mod tests {
             })
             .unwrap(),
         );
+    }
+
+    #[test]
+    fn test_stop_farm() {
+        let mut emulator = Emulator::new(
+            owner(),
+            "KuTCtARNzxZQ3YvXDeLjx83FDqxv2SdQTSbiq876zR7"
+                .parse()
+                .unwrap(),
+            zero_fee(),
+        );
+        emulator.update_context(owner(), 0);
+        emulator.contract.add_authorized_farm_token(&bob());
+        add_farm(&mut emulator, ntoy(100));
+        emulator.deposit_and_stake(alice(), ntoy(1_000_000));
+        emulator.skip_epochs(1);
+        assert!(almost_equal(
+            emulator.contract.get_unclaimed_reward(alice(), 0).0,
+            ntoy(25),
+            ntoy(1) / 100
+        ));
+        emulator.update_context(owner(), 0);
+        emulator.contract.stop_farm(0);
+        emulator.skip_epochs(1);
+        // Deposit alice, start farm, wait for 1 epoch.
+        // Stop farm, wait for another epoch - the amount of farmed tokens is the same.
+        assert!(almost_equal(
+            emulator.contract.get_unclaimed_reward(alice(), 0).0,
+            ntoy(25),
+            ntoy(1) / 100
+        ));
     }
 
     #[test]

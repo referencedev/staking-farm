@@ -287,4 +287,27 @@ impl StakingContract {
             self.internal_claim(&token_id, &account_id, &account_id)
         }
     }
+
+    /// Stops given farm at the current moment.
+    /// Warning: IF OWNER ACCOUNT DOESN'T HAVE STORAGE, THESE FUNDS WILL BE STUCK ON THE STAKING FARM.
+    pub fn stop_farm(&mut self, farm_id: u64) -> Promise {
+        self.assert_owner();
+        let mut farm = self.internal_get_farm(farm_id);
+        let leftover_amount = (U256::from(farm.amount)
+            * U256::from(farm.end_date - env::block_timestamp())
+            / U256::from(farm.end_date - farm.start_date))
+        .as_u128();
+        farm.end_date = env::block_timestamp();
+        farm.amount -= leftover_amount;
+        farm.last_distribution.undistributed -= leftover_amount;
+        self.farms.replace(farm_id, &farm);
+        ext_fungible_token::ft_transfer(
+            StakingContract::get_owner_id(),
+            U128(leftover_amount),
+            None,
+            farm.token_id.clone(),
+            1,
+            GAS_FOR_FT_TRANSFER,
+        )
+    }
 }
