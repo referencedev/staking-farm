@@ -8,8 +8,8 @@ use near_sdk::{
     PanicOnDefault, Promise, PromiseOrValue, PublicKey,
 };
 
-/// The 30 NEAR tokens required for the storage of the staking pool.
-const MIN_ATTACHED_BALANCE: Balance = 30_000_000_000_000_000_000_000_000;
+/// The 4 NEAR tokens required for the storage of the staking pool.
+const MIN_ATTACHED_BALANCE: Balance = 4_000_000_000_000_000_000_000_000;
 
 const NEW_METHOD_NAME: &str = "new";
 const ON_STAKING_POOL_CREATE: &str = "on_staking_pool_create";
