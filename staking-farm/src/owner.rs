@@ -15,6 +15,7 @@ const UPDATE_GAS_LEFTOVER: Gas = Gas(5_000_000_000_000);
 const NO_DEPOSIT: Balance = 0;
 
 const ERR_MUST_BE_OWNER: &str = "Can only be called by the owner";
+const ERR_MUST_BE_PAUSER: &str = "Can only be called by users with pauser role";
 const ERR_MUST_BE_SELF: &str = "Can only be called by contract itself";
 
 ///*******************/
@@ -77,10 +78,10 @@ impl StakingContract {
         }
     }
 
-    /// Owner's method.
+    /// Pauser's method.
     /// Pauses pool staking.
     pub fn pause_staking(&mut self) {
-        self.assert_owner();
+        self.assert_pauser();
         assert!(!self.paused, "The staking is already paused");
 
         self.internal_ping();
@@ -88,15 +89,27 @@ impl StakingContract {
         Promise::new(env::current_account_id()).stake(0, self.stake_public_key.clone());
     }
 
-    /// Owner's method.
+    /// Pauser's method.
     /// Resumes pool staking.
     pub fn resume_staking(&mut self) {
-        self.assert_owner();
+        self.assert_pauser();
         assert!(self.paused, "The staking is not paused");
 
         self.internal_ping();
         self.paused = false;
         self.internal_restake();
+    }
+
+    /// Add authorized user to pause/unpause the contract
+    pub fn add_pauser_user(&mut self, account_id: AccountId) {
+        self.assert_owner();
+        self.pauser_users.insert(&account_id);
+    }
+
+    /// Remove authorized user to pause/unpause the contract
+    pub fn remove_pauser_user(&mut self, account_id: AccountId) {
+        self.assert_owner();
+        self.pauser_users.remove(&account_id);
     }
 
     /// Add authorized user to the current contract.
@@ -130,6 +143,14 @@ impl StakingContract {
             StakingContract::get_owner_id(),
             "{}",
             ERR_MUST_BE_OWNER
+        );
+    }
+
+    pub(crate) fn assert_pauser(&self) {
+        assert!(
+            self.pauser_users.contains(&env::predecessor_account_id()),
+            "{}",
+            ERR_MUST_BE_PAUSER
         );
     }
 

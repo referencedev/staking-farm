@@ -55,6 +55,7 @@ pub enum StorageKeys {
     Farms,
     AuthorizedUsers,
     AuthorizedFarmTokens,
+    PauserUsers,
 }
 
 /// Tracking balance for burning.
@@ -141,6 +142,8 @@ pub struct StakingContract {
     /// Pausing is useful for node maintenance. Only the owner can pause and resume staking.
     /// The contract is not paused by default.
     pub paused: bool,
+    /// Authorized users to pause the contract.
+    pub pauser_users: UnorderedSet<AccountId>,
     /// Authorized users, allowed to add farms.
     /// This is done to prevent farm spam with random tokens.
     /// Should not be a large number.
@@ -218,9 +221,14 @@ impl StakingContract {
             farms: Vector::new(StorageKeys::Farms),
             active_farms: Vec::new(),
             paused: false,
+            pauser_users: UnorderedSet::new(StorageKeys::PauserUsers),
             authorized_users: UnorderedSet::new(StorageKeys::AuthorizedUsers),
             authorized_farm_tokens: UnorderedSet::new(StorageKeys::AuthorizedFarmTokens),
         };
+
+        // Initially the owner is the only user authorized to pause the contract.
+        this.pauser_users.insert(&owner_id);
+
         Self::internal_set_owner(&owner_id);
         Self::internal_set_factory(&env::predecessor_account_id());
         Self::internal_set_version();
