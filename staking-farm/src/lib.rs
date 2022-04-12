@@ -6,7 +6,7 @@ use near_sdk::json_types::U128;
 use near_sdk::serde::{Deserialize, Serialize};
 use near_sdk::{
     env, ext_contract, near_bindgen, AccountId, Balance, BorshStorageKey, EpochHeight, Gas,
-    Promise, PromiseResult, PublicKey,
+    PanicOnDefault, Promise, PromiseResult, PublicKey,
 };
 use uint::construct_uint;
 
@@ -107,7 +107,7 @@ impl UpdatableRewardFee {
 }
 
 #[near_bindgen]
-#[derive(BorshDeserialize, BorshSerialize)]
+#[derive(BorshDeserialize, BorshSerialize, PanicOnDefault)]
 pub struct StakingContract {
     /// The public key which is used for staking action. It's the public key of the validator node
     /// that validates on behalf of the pool.
@@ -148,12 +148,6 @@ pub struct StakingContract {
     /// Authorized tokens for farms.
     /// Required because any contract can call method with ft_transfer_call, so must verify that contract will accept it.
     pub authorized_farm_tokens: UnorderedSet<AccountId>,
-}
-
-impl Default for StakingContract {
-    fn default() -> Self {
-        panic!("Staking contract should be initialized before usage")
-    }
 }
 
 #[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize, Clone, PartialEq, Debug)]
