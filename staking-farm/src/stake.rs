@@ -142,13 +142,8 @@ impl StakingContract {
     /* Callbacks */
     /*************/
 
+    #[private]
     pub fn on_stake_action(&mut self) {
-        assert_eq!(
-            env::current_account_id(),
-            env::predecessor_account_id(),
-            "Can be called only as a callback"
-        );
-
         assert_eq!(
             env::promise_results_count(),
             1,
