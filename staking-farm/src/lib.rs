@@ -198,7 +198,6 @@ impl StakingContract {
         reward_fee_fraction: Ratio,
         burn_fee_fraction: Ratio,
     ) -> Self {
-        assert!(!env::state_exists(), "Already initialized");
         reward_fee_fraction.assert_valid();
         burn_fee_fraction.assert_valid();
         assert!(
