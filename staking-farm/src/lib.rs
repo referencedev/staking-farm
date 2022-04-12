@@ -173,6 +173,7 @@ impl Ratio {
     }
 
     pub fn multiply(&self, value: Balance) -> Balance {
+        self.assert_valid();
         if self.denominator == 0 || self.numerator == 0 {
             0
         } else {
