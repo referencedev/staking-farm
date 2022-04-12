@@ -199,6 +199,7 @@ impl StakingContract {
     ) -> Self {
         assert!(!env::state_exists(), "Already initialized");
         reward_fee_fraction.assert_valid();
+        burn_fee_fraction.assert_valid();
         assert!(
             env::is_valid_account_id(owner_id.as_bytes()),
             "The owner account ID is invalid"
