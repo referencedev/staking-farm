@@ -6,7 +6,7 @@ use near_sdk::json_types::U128;
 use near_sdk::serde::{Deserialize, Serialize};
 use near_sdk::{
     env, ext_contract, near_bindgen, AccountId, Balance, BorshStorageKey, EpochHeight, Gas,
-    Promise, PromiseResult, PublicKey,
+    PanicOnDefault, Promise, PromiseResult, PublicKey,
 };
 use uint::construct_uint;
 
@@ -55,6 +55,7 @@ pub enum StorageKeys {
     Farms,
     AuthorizedUsers,
     AuthorizedFarmTokens,
+    PauserUsers,
 }
 
 /// Tracking balance for burning.
@@ -107,7 +108,7 @@ impl UpdatableRewardFee {
 }
 
 #[near_bindgen]
-#[derive(BorshDeserialize, BorshSerialize)]
+#[derive(BorshDeserialize, BorshSerialize, PanicOnDefault)]
 pub struct StakingContract {
     /// The public key which is used for staking action. It's the public key of the validator node
     /// that validates on behalf of the pool.
@@ -141,6 +142,8 @@ pub struct StakingContract {
     /// Pausing is useful for node maintenance. Only the owner can pause and resume staking.
     /// The contract is not paused by default.
     pub paused: bool,
+    /// Authorized users to pause the contract.
+    pub pauser_users: UnorderedSet<AccountId>,
     /// Authorized users, allowed to add farms.
     /// This is done to prevent farm spam with random tokens.
     /// Should not be a large number.
@@ -148,12 +151,6 @@ pub struct StakingContract {
     /// Authorized tokens for farms.
     /// Required because any contract can call method with ft_transfer_call, so must verify that contract will accept it.
     pub authorized_farm_tokens: UnorderedSet<AccountId>,
-}
-
-impl Default for StakingContract {
-    fn default() -> Self {
-        panic!("Staking contract should be initialized before usage")
-    }
 }
 
 #[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize, Clone, PartialEq, Debug)]
@@ -173,6 +170,7 @@ impl Ratio {
     }
 
     pub fn multiply(&self, value: Balance) -> Balance {
+        self.assert_valid();
         if self.denominator == 0 || self.numerator == 0 {
             0
         } else {
@@ -197,8 +195,8 @@ impl StakingContract {
         reward_fee_fraction: Ratio,
         burn_fee_fraction: Ratio,
     ) -> Self {
-        assert!(!env::state_exists(), "Already initialized");
         reward_fee_fraction.assert_valid();
+        burn_fee_fraction.assert_valid();
         assert!(
             env::is_valid_account_id(owner_id.as_bytes()),
             "The owner account ID is invalid"
@@ -223,9 +221,14 @@ impl StakingContract {
             farms: Vector::new(StorageKeys::Farms),
             active_farms: Vec::new(),
             paused: false,
+            pauser_users: UnorderedSet::new(StorageKeys::PauserUsers),
             authorized_users: UnorderedSet::new(StorageKeys::AuthorizedUsers),
             authorized_farm_tokens: UnorderedSet::new(StorageKeys::AuthorizedFarmTokens),
         };
+
+        // Initially the owner is the only user authorized to pause the contract.
+        this.pauser_users.insert(&owner_id);
+
         Self::internal_set_owner(&owner_id);
         Self::internal_set_factory(&env::predecessor_account_id());
         Self::internal_set_version();
