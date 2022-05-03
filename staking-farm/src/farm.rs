@@ -20,6 +20,7 @@ pub const GET_OWNER_METHOD: &str = "get_owner_account_id";
 #[derive(BorshSerialize, BorshDeserialize, Clone, Debug)]
 pub struct RewardDistribution {
     pub undistributed: Balance,
+    /// DEPRECATED: Unused.
     pub unclaimed: Balance,
     pub reward_per_share: U256,
     pub reward_round: u64,
@@ -71,6 +72,60 @@ impl StakingContract {
             },
         });
         self.active_farms.push(self.farms.len() - 1);
+    }
+
+    pub(crate) fn internal_add_farm_tokens(
+        &mut self,
+        token_id: &AccountId,
+        farm_id: u64,
+        additional_amount: Balance,
+        start_date: Option<Timestamp>,
+        end_date: Timestamp,
+    ) {
+        let mut farm = self.internal_get_farm(farm_id);
+        assert_eq!(&farm.token_id, token_id, "ERR_FARM_INVALID_TOKEN_ID");
+        assert!(additional_amount > 0, "ERR_FARM_AMOUNT_NON_ZERO");
+
+        if let Some(distribution) = self.internal_calculate_distribution(
+            &farm,
+            self.total_stake_shares - self.total_burn_shares,
+        ) {
+            // The farm has started.
+            assert!(start_date.is_none(), "ERR_FARM_HAS_STARTED");
+            farm.amount = distribution.undistributed + additional_amount;
+            farm.start_date = env::block_timestamp();
+            farm.last_distribution = RewardDistribution {
+                undistributed: farm.amount,
+                unclaimed: 0,
+                reward_per_share: distribution.reward_per_share,
+                reward_round: 0,
+            };
+        } else {
+            // The farm hasn't started, we can replace the farm.
+            let start_date = start_date.unwrap_or(farm.start_date);
+            assert!(start_date >= env::block_timestamp(), "ERR_FARM_TOO_EARLY");
+            farm.amount += additional_amount;
+            farm.start_date = start_date;
+            farm.last_distribution = RewardDistribution {
+                undistributed: farm.amount,
+                unclaimed: 0,
+                reward_per_share: U256::zero(),
+                reward_round: 0,
+            };
+        }
+        farm.end_date = end_date;
+
+        assert!(
+            farm.end_date > farm.start_date + SESSION_INTERVAL,
+            "ERR_FARM_DATE"
+        );
+        assert!(farm.amount > 0, "ERR_FARM_AMOUNT_NON_ZERO");
+        assert!(
+            farm.amount / ((farm.end_date - farm.start_date) / SESSION_INTERVAL) as u128 > 0,
+            "ERR_FARM_AMOUNT_TOO_SMALL"
+        );
+
+        self.farms.replace(farm_id, &farm);
     }
 
     pub(crate) fn internal_get_farm(&self, farm_id: u64) -> Farm {
@@ -293,16 +348,21 @@ impl StakingContract {
     pub fn stop_farm(&mut self, farm_id: u64) -> Promise {
         self.assert_owner();
         let mut farm = self.internal_get_farm(farm_id);
-        let leftover_amount = (U256::from(farm.amount)
-            * U256::from(farm.end_date - env::block_timestamp())
-            / U256::from(farm.end_date - farm.start_date))
-        .as_u128();
-        farm.end_date = env::block_timestamp();
+        let leftover_amount = if let Some(distribution) = self.internal_calculate_distribution(
+            &farm,
+            self.total_stake_shares - self.total_burn_shares,
+        ) {
+            farm.end_date = env::block_timestamp();
+            farm.last_distribution = distribution;
+            farm.last_distribution.undistributed
+        } else {
+            farm.amount
+        };
         farm.amount -= leftover_amount;
-        farm.last_distribution.undistributed -= leftover_amount;
+        farm.last_distribution.undistributed = 0;
         self.farms.replace(farm_id, &farm);
         ext_fungible_token::ft_transfer(
-            StakingContract::get_owner_id(),
+            StakingContract::internal_get_owner_id(),
             U128(leftover_amount),
             None,
             farm.token_id.clone(),

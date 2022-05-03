@@ -1,3 +1,4 @@
+use crate::owner::{FACTORY_KEY, OWNER_KEY};
 use crate::stake::ext_self;
 use crate::*;
 use near_sdk::log;
@@ -264,7 +265,7 @@ impl StakingContract {
                 &AccountId::new_unchecked(ZERO_ADDRESS.to_string()),
                 num_burn_shares,
             );
-            self.internal_add_shares(&StakingContract::get_owner_id(), num_owner_shares);
+            self.internal_add_shares(&StakingContract::internal_get_owner_id(), num_owner_shares);
 
             // Increasing the total staked balance by the owners fee, no matter whether the owner
             // received any shares or not.
@@ -375,5 +376,26 @@ impl StakingContract {
         } else {
             self.accounts.remove(account_id);
         }
+    }
+
+    /// Returns current contract version.
+    pub(crate) fn internal_get_version() -> String {
+        format!("{}:{}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"))
+    }
+
+    /// Returns current owner from the storage.
+    pub(crate) fn internal_get_owner_id() -> AccountId {
+        AccountId::new_unchecked(
+            String::from_utf8(env::storage_read(OWNER_KEY).expect("MUST HAVE OWNER"))
+                .expect("INTERNAL_FAIL"),
+        )
+    }
+
+    /// Returns current contract factory.
+    pub(crate) fn internal_get_factory_id() -> AccountId {
+        AccountId::new_unchecked(
+            String::from_utf8(env::storage_read(FACTORY_KEY).expect("MUST HAVE FACTORY"))
+                .expect("INTERNAL_FAIL"),
+        )
     }
 }
