@@ -26,6 +26,10 @@ pub struct Account {
     pub last_farm_reward_per_share: HashMap<u64, U256>,
     /// Farmed tokens withdrawn from the farm but not from the contract.
     pub amounts: HashMap<AccountId, Balance>,
+    /// Is this a burn account.
+    /// Note: It's not persisted in the state, but initialized during internal_get_account.
+    #[borsh_skip]
+    pub is_burn_account: bool,
 }
 
 impl Default for Account {
@@ -36,6 +40,7 @@ impl Default for Account {
             unstaked_available_epoch_height: 0,
             last_farm_reward_per_share: HashMap::new(),
             amounts: HashMap::new(),
+            is_burn_account: false,
         }
     }
 }

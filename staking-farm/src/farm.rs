@@ -186,20 +186,21 @@ impl StakingContract {
             if distribution.reward_round != farm.last_distribution.reward_round {
                 farm.last_distribution = distribution.clone();
             }
-            let user_rps = account
-                .last_farm_reward_per_share
-                .get(&farm_id)
-                .cloned()
-                .unwrap_or(U256::zero());
-            (
-                farm.last_distribution.reward_per_share,
-                (U256::from(account.stake_shares) * (distribution.reward_per_share - user_rps)
-                    / DENOMINATOR)
-                    .as_u128(),
-            )
-        } else {
-            (U256::zero(), 0)
+            if !account.is_burn_account {
+                let user_rps = account
+                    .last_farm_reward_per_share
+                    .get(&farm_id)
+                    .cloned()
+                    .unwrap_or(U256::zero());
+                return (
+                    farm.last_distribution.reward_per_share,
+                    (U256::from(account.stake_shares) * (distribution.reward_per_share - user_rps)
+                        / DENOMINATOR)
+                        .as_u128(),
+                );
+            }
         }
+        (U256::zero(), 0)
     }
 
     fn internal_distribute_reward(
@@ -210,14 +211,16 @@ impl StakingContract {
     ) {
         let (new_user_rps, claim_amount) =
             self.internal_unclaimed_balance(&account, farm_id, &mut farm);
-        account
-            .last_farm_reward_per_share
-            .insert(farm_id, new_user_rps);
-        *account.amounts.entry(farm.token_id.clone()).or_default() += claim_amount;
-        env::log_str(&format!(
-            "Record {} {} reward from farm #{}",
-            claim_amount, farm.token_id, farm_id
-        ));
+        if !account.is_burn_account {
+            account
+                .last_farm_reward_per_share
+                .insert(farm_id, new_user_rps);
+            *account.amounts.entry(farm.token_id.clone()).or_default() += claim_amount;
+            env::log_str(&format!(
+                "Record {} {} reward from farm #{}",
+                claim_amount, farm.token_id, farm_id
+            ));
+        }
     }
 
     /// Distribute all rewards for the given user.

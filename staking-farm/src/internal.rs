@@ -175,7 +175,7 @@ impl StakingContract {
 
         self.total_staked_balance -= unstake_amount;
         self.total_stake_shares -= num_shares;
-        if account_id == &AccountId::new_unchecked(ZERO_ADDRESS.to_string()) {
+        if account.is_burn_account {
             self.total_burn_shares -= num_shares;
         }
 
@@ -365,7 +365,9 @@ impl StakingContract {
 
     /// Inner method to get the given account or a new default value account.
     pub(crate) fn internal_get_account(&self, account_id: &AccountId) -> Account {
-        self.accounts.get(account_id).unwrap_or_default()
+        let mut account = self.accounts.get(account_id).unwrap_or_default();
+        account.is_burn_account = account_id.as_str() == ZERO_ADDRESS;
+        account
     }
 
     /// Inner method to save the given account for a given account ID.
