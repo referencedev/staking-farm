@@ -1,3 +1,4 @@
+use crate::owner::{FACTORY_KEY, OWNER_KEY};
 use crate::stake::ext_self;
 use crate::*;
 use near_sdk::log;
@@ -174,7 +175,7 @@ impl StakingContract {
 
         self.total_staked_balance -= unstake_amount;
         self.total_stake_shares -= num_shares;
-        if account_id == &AccountId::new_unchecked(ZERO_ADDRESS.to_string()) {
+        if account.is_burn_account {
             self.total_burn_shares -= num_shares;
         }
 
@@ -264,7 +265,7 @@ impl StakingContract {
                 &AccountId::new_unchecked(ZERO_ADDRESS.to_string()),
                 num_burn_shares,
             );
-            self.internal_add_shares(&StakingContract::get_owner_id(), num_owner_shares);
+            self.internal_add_shares(&StakingContract::internal_get_owner_id(), num_owner_shares);
 
             // Increasing the total staked balance by the owners fee, no matter whether the owner
             // received any shares or not.
@@ -364,7 +365,9 @@ impl StakingContract {
 
     /// Inner method to get the given account or a new default value account.
     pub(crate) fn internal_get_account(&self, account_id: &AccountId) -> Account {
-        self.accounts.get(account_id).unwrap_or_default()
+        let mut account = self.accounts.get(account_id).unwrap_or_default();
+        account.is_burn_account = account_id.as_str() == ZERO_ADDRESS;
+        account
     }
 
     /// Inner method to save the given account for a given account ID.
@@ -375,5 +378,26 @@ impl StakingContract {
         } else {
             self.accounts.remove(account_id);
         }
+    }
+
+    /// Returns current contract version.
+    pub(crate) fn internal_get_version() -> String {
+        format!("{}:{}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"))
+    }
+
+    /// Returns current owner from the storage.
+    pub(crate) fn internal_get_owner_id() -> AccountId {
+        AccountId::new_unchecked(
+            String::from_utf8(env::storage_read(OWNER_KEY).expect("MUST HAVE OWNER"))
+                .expect("INTERNAL_FAIL"),
+        )
+    }
+
+    /// Returns current contract factory.
+    pub(crate) fn internal_get_factory_id() -> AccountId {
+        AccountId::new_unchecked(
+            String::from_utf8(env::storage_read(FACTORY_KEY).expect("MUST HAVE FACTORY"))
+                .expect("INTERNAL_FAIL"),
+        )
     }
 }

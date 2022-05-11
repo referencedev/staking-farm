@@ -2,7 +2,6 @@ use near_sdk::json_types::{U128, U64};
 use near_sdk::{env, AccountId};
 
 use crate::internal::ZERO_ADDRESS;
-use crate::owner::{FACTORY_KEY, OWNER_KEY};
 use crate::Farm;
 use crate::*;
 
@@ -53,7 +52,7 @@ pub struct PoolSummary {
     /// Pool owner.
     pub owner: AccountId,
     /// The total staked balance.
-    pub total_staked_balance: Balance,
+    pub total_staked_balance: U128,
     /// The total amount to burn that will be available
     /// The fraction of the reward that goes to the owner of the staking pool for running the
     /// validator node.
@@ -76,8 +75,8 @@ impl StakingContract {
     /// `reward_rate = total_reward_per_day / (this.total_staked_balance * NEAR_PRICE)`
     pub fn get_pool_summary(&self) -> PoolSummary {
         PoolSummary {
-            owner: StakingContract::get_owner_id(),
-            total_staked_balance: self.total_staked_balance,
+            owner: StakingContract::internal_get_owner_id(),
+            total_staked_balance: self.total_staked_balance.into(),
             reward_fee_fraction: self.reward_fee_fraction.current().clone(),
             next_reward_fee_fraction: self.reward_fee_fraction.next().clone(),
             burn_fee_fraction: self.burn_fee_fraction.clone(),
@@ -90,24 +89,18 @@ impl StakingContract {
     ///
 
     /// Returns current contract version.
-    pub fn get_version() -> String {
-        format!("{}:{}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"))
+    pub fn get_version(&self) -> String {
+        Self::internal_get_version()
     }
 
     /// Returns current owner from the storage.
-    pub fn get_owner_id() -> AccountId {
-        AccountId::new_unchecked(
-            String::from_utf8(env::storage_read(OWNER_KEY).expect("MUST HAVE OWNER"))
-                .expect("INTERNAL_FAIL"),
-        )
+    pub fn get_owner_id(&self) -> AccountId {
+        Self::internal_get_owner_id()
     }
 
     /// Returns current contract factory.
-    pub fn get_factory_id() -> AccountId {
-        AccountId::new_unchecked(
-            String::from_utf8(env::storage_read(FACTORY_KEY).expect("MUST HAVE FACTORY"))
-                .expect("INTERNAL_FAIL"),
-        )
+    pub fn get_factory_id(&self) -> AccountId {
+        Self::internal_get_factory_id()
     }
 
     /// Return all authorized users.

@@ -15,9 +15,10 @@ const STAKING_KEY: &str = "KuTCtARNzxZQ3YvXDeLjx83FDqxv2SdQTSbiq876zR7";
 const POOL_DEPOSIT: &str = "50";
 
 near_sdk_sim::lazy_static_include::lazy_static_include_bytes! {
-    FACTORY_WASM_BYTES => "../res/staking_factory_local.wasm",
+    FACTORY_WASM_BYTES => "../res/staking_factory_release.wasm",
     WHITELIST_WASM_BYTES => "../res/whitelist.wasm",
-    STAKING_FARM_BYTES => "../res/staking_farm_local.wasm",
+    STAKING_FARM_1_0_0_BYTES => "../res/staking_farm_release_1.0.0.wasm",
+    STAKING_FARM_BYTES => "../res/staking_farm_release.wasm",
 }
 
 type FactoryContract = ContractAccount<StakingPoolFactoryContract>;
@@ -139,6 +140,15 @@ fn get_staking_pool_key(user: &UserAccount) -> PublicKey {
     .unwrap_json()
 }
 
+fn get_version(user: &UserAccount) -> String {
+    user.view(
+        AccountId::new_unchecked(STAKING_POOL_ACCOUNT_ID.to_string()),
+        "get_version",
+        &[],
+    )
+    .unwrap_json()
+}
+
 #[test]
 fn create_staking_pool_success() {
     let (root, _foundation, factory, code_hash) = setup_factory();
@@ -161,22 +171,6 @@ fn create_staking_pool_success() {
     assert!(acc.amount + acc.locked > to_yocto(POOL_DEPOSIT));
 
     // The staking key on the pool matches the one that was given.
-    assert_eq!(get_staking_pool_key(&root), STAKING_KEY.parse().unwrap());
-}
-
-#[test]
-fn test_staking_pool_upgrade() {
-    let (root, _foundation, factory, code_hash) = setup_factory();
-    create_staking_pool(&root, &factory, code_hash).assert_success();
-    // Upgrade staking pool.
-    assert_all_success(root.call(
-        AccountId::new_unchecked(STAKING_POOL_ACCOUNT_ID.to_string()),
-        "upgrade",
-        &serde_json::to_vec(&json!({ "code_hash": code_hash })).unwrap(),
-        near_sdk_sim::DEFAULT_GAS,
-        0,
-    ));
-    // Check that contract works.
     assert_eq!(get_staking_pool_key(&root), STAKING_KEY.parse().unwrap());
 }
 
@@ -213,4 +207,51 @@ fn test_get_code() {
         .to_string()
         .find("Contract hash is not allowed")
         .is_some());
+}
+
+#[test]
+fn test_staking_pool_upgrade_from_1_0_0() {
+    let (root, foundation, factory, code_hash) = setup_factory();
+    let hash_1_0_0 = foundation
+        .call(
+            factory.account_id(),
+            "store",
+            &STAKING_FARM_1_0_0_BYTES,
+            near_sdk_sim::DEFAULT_GAS,
+            to_yocto("5"),
+        )
+        .unwrap_json::<Base58CryptoHash>();
+    call!(foundation, factory.allow_contract(hash_1_0_0)).assert_success();
+
+    create_staking_pool(&root, &factory, hash_1_0_0).assert_success();
+
+    let attempted_get_version_view = root.view(
+        AccountId::new_unchecked(STAKING_POOL_ACCOUNT_ID.to_string()),
+        "get_version",
+        &[],
+    );
+    assert!(attempted_get_version_view.is_err());
+
+    let version_through_call: String = root
+        .call(
+            AccountId::new_unchecked(STAKING_POOL_ACCOUNT_ID.to_string()),
+            "get_version",
+            &[],
+            near_sdk_sim::DEFAULT_GAS,
+            0,
+        )
+        .unwrap_json();
+    assert_eq!(version_through_call, "staking-farm:1.0.0");
+
+    // Upgrade staking pool.
+    assert_all_success(root.call(
+        AccountId::new_unchecked(STAKING_POOL_ACCOUNT_ID.to_string()),
+        "upgrade",
+        &serde_json::to_vec(&json!({ "code_hash": code_hash })).unwrap(),
+        near_sdk_sim::DEFAULT_GAS,
+        0,
+    ));
+    // Check that contract works.
+    assert_eq!(get_staking_pool_key(&root), STAKING_KEY.parse().unwrap());
+    assert_eq!(get_version(&root), "staking-farm:1.1.0");
 }

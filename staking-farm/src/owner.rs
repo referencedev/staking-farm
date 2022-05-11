@@ -16,6 +16,7 @@ const NO_DEPOSIT: Balance = 0;
 
 const ERR_MUST_BE_OWNER: &str = "Can only be called by the owner";
 const ERR_MUST_BE_SELF: &str = "Can only be called by contract itself";
+const ERR_MUST_BE_FACTORY: &str = "Can only be called by staking pool factory";
 
 ///*******************/
 ///* Owner's methods */
@@ -36,7 +37,7 @@ impl StakingContract {
     }
 
     pub(crate) fn internal_set_version() {
-        env::storage_write(VERSION_KEY, Self::get_version().as_bytes());
+        env::storage_write(VERSION_KEY, Self::internal_get_version().as_bytes());
     }
 
     pub(crate) fn internal_get_state_version() -> String {
@@ -72,6 +73,25 @@ impl StakingContract {
 
         let need_to_restake = self.internal_ping();
         self.reward_fee_fraction.set(reward_fee_fraction);
+        if need_to_restake {
+            self.internal_restake();
+        }
+    }
+
+    /// Can only be called by the factory.
+    /// Decreases the current burn fee fraction to the new given fraction.
+    pub fn decrease_burn_fee_fraction(&mut self, burn_fee_fraction: Ratio) {
+        self.assert_factory();
+        burn_fee_fraction.assert_valid();
+        assert!(
+            u64::from(burn_fee_fraction.numerator) * u64::from(self.burn_fee_fraction.denominator)
+                < u64::from(burn_fee_fraction.denominator)
+                    * u64::from(self.burn_fee_fraction.numerator),
+            "The factory can only decrease the burn fee fraction"
+        );
+
+        let need_to_restake = self.internal_ping();
+        self.burn_fee_fraction = burn_fee_fraction;
         if need_to_restake {
             self.internal_restake();
         }
@@ -127,9 +147,19 @@ impl StakingContract {
     pub(crate) fn assert_owner(&self) {
         assert_eq!(
             env::predecessor_account_id(),
-            StakingContract::get_owner_id(),
+            StakingContract::internal_get_owner_id(),
             "{}",
             ERR_MUST_BE_OWNER
+        );
+    }
+
+    /// Asserts that the method was called by the factory.
+    pub(crate) fn assert_factory(&self) {
+        assert_eq!(
+            env::predecessor_account_id(),
+            StakingContract::internal_get_factory_id(),
+            "{}",
+            ERR_MUST_BE_FACTORY
         );
     }
 
@@ -137,7 +167,7 @@ impl StakingContract {
     pub(crate) fn assert_owner_or_authorized_user(&self) {
         let account_id = env::predecessor_account_id();
         assert!(
-            account_id == StakingContract::get_owner_id()
+            account_id == StakingContract::internal_get_owner_id()
                 || self.authorized_users.contains(&account_id),
             "ERR_NOT_AUTHORIZED_USER"
         );
@@ -153,8 +183,8 @@ impl StakingContract {
 pub extern "C" fn upgrade() {
     env::setup_panic_hook();
     let current_id = env::current_account_id();
-    let owner_id = StakingContract::get_owner_id();
-    let factory_id = StakingContract::get_factory_id();
+    let owner_id = StakingContract::internal_get_owner_id();
+    let factory_id = StakingContract::internal_get_factory_id();
     assert_eq!(
         env::predecessor_account_id(),
         owner_id,
@@ -250,11 +280,12 @@ pub extern "C" fn migrate() {
         "{}",
         ERR_MUST_BE_SELF
     );
+
     // Check that state version is previous.
     // Will fail migration in the case of trying to skip the versions.
     assert_eq!(
         StakingContract::internal_get_state_version(),
-        // TODO: change this when writing migration.
-        StakingContract::get_version()
+        "staking-farm:1.0.0"
     );
+    StakingContract::internal_set_version();
 }

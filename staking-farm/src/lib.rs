@@ -12,7 +12,7 @@ use uint::construct_uint;
 
 use crate::account::{Account, NumStakeShares};
 use crate::farm::Farm;
-pub use crate::views::{HumanReadableAccount, HumanReadableFarm};
+pub use crate::views::{HumanReadableAccount, HumanReadableFarm, PoolSummary};
 
 mod account;
 mod farm;
@@ -247,12 +247,11 @@ mod tests {
     use near_contract_standards::fungible_token::receiver::FungibleTokenReceiver;
     use near_sdk::json_types::U64;
     use near_sdk::mock::VmAction;
-    use near_sdk::serde_json;
+    use near_sdk::serde_json::json;
     use near_sdk::test_utils::{get_created_receipts, testing_env_with_promise_results};
 
     use crate::test_utils::tests::*;
     use crate::test_utils::*;
-    use crate::token_receiver::FarmingDetails;
 
     use super::*;
 
@@ -668,12 +667,12 @@ mod tests {
         emulator.contract.ft_on_transfer(
             owner(),
             U128(amount),
-            serde_json::to_string(&FarmingDetails {
-                name: "test".to_string(),
-                start_date: U64(0),
-                end_date: U64(ONE_EPOCH_TS * 4),
+            json!({
+                "name": "test".to_string(),
+                "start_date": U64(0),
+                "end_date": U64(ONE_EPOCH_TS * 4),
             })
-            .unwrap(),
+            .to_string(),
         );
     }
 
