@@ -21,7 +21,7 @@ pub const GET_OWNER_METHOD: &str = "get_owner_account_id";
 pub struct RewardDistribution {
     pub undistributed: Balance,
     /// DEPRECATED: Unused.
-    pub unclaimed: Balance,
+    pub _deprecated_unclaimed: Balance,
     pub reward_per_share: U256,
     pub reward_round: u64,
 }
@@ -66,7 +66,7 @@ impl StakingContract {
             end_date,
             last_distribution: RewardDistribution {
                 undistributed: amount,
-                unclaimed: 0,
+                _deprecated_unclaimed: 0,
                 reward_per_share: U256::zero(),
                 reward_round: 0,
             },
@@ -96,7 +96,7 @@ impl StakingContract {
             farm.start_date = env::block_timestamp();
             farm.last_distribution = RewardDistribution {
                 undistributed: farm.amount,
-                unclaimed: 0,
+                _deprecated_unclaimed: 0,
                 reward_per_share: distribution.reward_per_share,
                 reward_round: 0,
             };
@@ -108,7 +108,7 @@ impl StakingContract {
             farm.start_date = start_date;
             farm.last_distribution = RewardDistribution {
                 undistributed: farm.amount,
-                unclaimed: 0,
+                _deprecated_unclaimed: 0,
                 reward_per_share: U256::zero(),
                 reward_round: 0,
             };
@@ -162,7 +162,6 @@ impl StakingContract {
                 distribution.reward_round += 1;
             }
         }
-        distribution.unclaimed += reward_added;
         distribution.undistributed -= reward_added;
         if total_staked == 0 {
             distribution.reward_per_share = U256::zero();
