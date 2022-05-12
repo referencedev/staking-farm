@@ -1,7 +1,7 @@
 use crate::stake::ext_self;
 use crate::*;
 use near_sdk::log;
-
+use crate::staking_pool::{StakingPool};
 /// Zero address is implicit address that doesn't have a key for it.
 /// Used for burning tokens.
 pub const ZERO_ADDRESS: &str = "0000000000000000000000000000000000000000000000000000000000000000";
@@ -22,7 +22,7 @@ impl StakingContract {
         // Stakes with the staking public key. If the public key is invalid the entire function
         // call will be rolled back.
         Promise::new(env::current_account_id())
-            .stake(self.total_staked_balance, self.stake_public_key.clone())
+            .stake(self.get_total_staked_balance().0, self.stake_public_key.clone())
             .then(ext_self::on_stake_action(
                 env::current_account_id(),
                 NO_DEPOSIT,
@@ -30,47 +30,33 @@ impl StakingContract {
             ));
     }
 
-    pub(crate) fn internal_deposit(&mut self) -> u128 {
+    pub(crate) fn internal_deposit(&mut self, should_staking_pool_restake_rewards: bool) -> u128 {
         let account_id = env::predecessor_account_id();
-        let mut account = self.internal_get_account(&account_id);
+        let staking_pool = self.get_staking_pool_or_create(&account_id, should_staking_pool_restake_rewards);
         let amount = env::attached_deposit();
-        account.unstaked += amount;
-        self.internal_save_account(&account_id, &account);
+        
+        staking_pool.deposit(&account_id, amount);
         self.last_total_balance += amount;
 
-        log!(
-            "@{} deposited {}. New unstaked balance is {}",
-            account_id,
-            amount,
-            account.unstaked
-        );
         amount
     }
 
-    pub(crate) fn internal_withdraw(&mut self, account_id: &AccountId, amount: Balance) {
+    pub(crate) fn internal_withdraw(&mut self, account_id: &AccountId, amount: Balance, withdraw_rewards: bool) {
         assert!(amount > 0, "Withdrawal amount should be positive");
 
-        let mut account = self.internal_get_account(&account_id);
-        assert!(
-            account.unstaked >= amount,
-            "Not enough unstaked balance to withdraw"
-        );
-        assert!(
-            account.unstaked_available_epoch_height <= env::epoch_height(),
-            "The unstaked balance is not yet available due to unstaking delay"
-        );
-        account.unstaked -= amount;
-        self.internal_save_account(&account_id, &account);
-
-        log!(
-            "@{} withdrawing {}. New unstaked balance is {}",
-            account_id,
-            amount,
-            account.unstaked
-        );
-
-        Promise::new(account_id.clone()).transfer(amount);
-        self.last_total_balance -= amount;
+        let staking_pool = self.get_staking_pool_or_assert_if_not_present(&account_id);
+        let mut total_withdraw = 0u128;
+        if withdraw_rewards {
+            let (rewards, _)= staking_pool.withdraw_not_staked_rewards(&account_id);
+            total_withdraw += rewards;
+        }
+        let should_remove_account_from_staking_pool_register = staking_pool.withdraw(&account_id, amount);
+        if should_remove_account_from_staking_pool_register{
+            self.account_pool_register.remove(&account_id);
+        }        
+        total_withdraw += amount;
+        Promise::new(account_id.clone()).transfer(total_withdraw);
+        self.last_total_balance -= total_withdraw;
     }
 
     pub(crate) fn internal_stake(&mut self, amount: Balance) {
@@ -374,6 +360,49 @@ impl StakingContract {
             self.accounts.insert(account_id, &account);
         } else {
             self.accounts.remove(account_id);
+        }
+    }
+
+    /// Register account to which staking pool it belongs
+    pub(crate) fn internal_register_account_to_staking_pool(&mut self, account_id: &AccountId, do_stake_rewards: bool){
+        self.account_pool_register.insert(account_id, &do_stake_rewards);
+    }
+
+    /// Get staking pool for account id, if its not present create it
+    /// based on client intention, if he wants his rewards to be restaked or not
+    pub(crate) fn get_staking_pool_or_create(&mut self, account_id: &AccountId, should_staking_pool_restake_rewards: bool) -> &mut dyn StakingPool{
+        let account_staking_pool_option = self.account_pool_register.get(&account_id);
+
+        if account_staking_pool_option.is_none(){
+            self.internal_register_account_to_staking_pool(account_id, should_staking_pool_restake_rewards);
+        }
+
+        if account_staking_pool_option.unwrap_or(should_staking_pool_restake_rewards) {
+            return &mut self.rewards_staked_staking_pool;
+        }else{
+            return &mut self.rewards_not_staked_staking_pool;
+        }
+    }
+
+    /// Get inner staking pool associated with account or default inner staking pool
+    pub(crate) fn get_staking_pool_or_default(&self, account_id: &AccountId) -> &dyn StakingPool{
+        let account_staking_pool_option = self.account_pool_register.get(&account_id);
+
+        if account_staking_pool_option.unwrap_or(true){
+            return &self.rewards_staked_staking_pool;
+        }else{
+            return &self.rewards_not_staked_staking_pool;
+        }
+    }
+
+    fn get_staking_pool_or_assert_if_not_present(&mut self, account_id: &AccountId) -> &mut dyn StakingPool{
+        let account_staking_pool_option = self.account_pool_register.get(&account_id);
+        assert!(account_staking_pool_option.is_some(), "Account {} should be registered for one of the staking pools", account_id);
+
+        if account_staking_pool_option.unwrap() {
+            return &mut self.rewards_staked_staking_pool;
+        }else{
+            return &mut self.rewards_not_staked_staking_pool;
         }
     }
 }

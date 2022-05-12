@@ -13,7 +13,9 @@ use uint::construct_uint;
 use crate::account::{Account, NumStakeShares};
 use crate::farm::Farm;
 pub use crate::views::{HumanReadableAccount, HumanReadableFarm};
+use crate::staking_pool::{InnerStakingPool, InnerStakingPoolWithoutRewardsRestaked};
 
+mod staking_pool;
 mod account;
 mod farm;
 mod internal;
@@ -55,6 +57,8 @@ pub enum StorageKeys {
     Farms,
     AuthorizedUsers,
     AuthorizedFarmTokens,
+    AccountRegistry,
+    AccountsNotStakedStakingPool,
 }
 
 /// Tracking balance for burning.
@@ -148,6 +152,12 @@ pub struct StakingContract {
     /// Authorized tokens for farms.
     /// Required because any contract can call method with ft_transfer_call, so must verify that contract will accept it.
     pub authorized_farm_tokens: UnorderedSet<AccountId>,
+    /// Inner staking pool, that restakes the received rewards
+    pub rewards_staked_staking_pool: InnerStakingPool,
+    /// Inner staking pool, that doesnt restake rewards
+    pub rewards_not_staked_staking_pool: InnerStakingPoolWithoutRewardsRestaked,
+    /// Map showing whether account has his rewards staked or unstaked
+    pub account_pool_register: UnorderedMap<AccountId, bool>,
 }
 
 impl Default for StakingContract {
@@ -225,6 +235,9 @@ impl StakingContract {
             paused: false,
             authorized_users: UnorderedSet::new(StorageKeys::AuthorizedUsers),
             authorized_farm_tokens: UnorderedSet::new(StorageKeys::AuthorizedFarmTokens),
+            rewards_staked_staking_pool: InnerStakingPool::new(NumStakeShares::from(total_staked_balance), total_staked_balance),
+            rewards_not_staked_staking_pool: InnerStakingPoolWithoutRewardsRestaked::new(),
+            account_pool_register: UnorderedMap::new(StorageKeys::AccountRegistry),
         };
         Self::internal_set_owner(&owner_id);
         Self::internal_set_factory(&env::predecessor_account_id());

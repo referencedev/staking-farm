@@ -44,6 +44,10 @@ pub struct HumanReadableAccount {
     pub staked_balance: U128,
     /// Whether the unstaked balance is available for withdrawal now.
     pub can_withdraw: bool,
+    /// Rewards showing information for those accounts
+    /// that have their tokens delegated to a pool which
+    /// doesnt restake its rewards
+    pub rewards_for_withdraw: U128,
 }
 
 /// Represents pool summary with all farms and rates applied.
@@ -181,7 +185,9 @@ impl StakingContract {
 
     /// Returns the total staking balance.
     pub fn get_total_staked_balance(&self) -> U128 {
-        self.total_staked_balance.into()
+        (self.rewards_staked_staking_pool.total_staked_balance 
+            + self.rewards_not_staked_staking_pool.total_staked_balance)
+            .into()
     }
 
     /// Returns the current reward fee as a fraction.
@@ -201,15 +207,8 @@ impl StakingContract {
 
     /// Returns human readable representation of the account for the given account ID.
     pub fn get_account(&self, account_id: AccountId) -> HumanReadableAccount {
-        let account = self.internal_get_account(&account_id);
-        HumanReadableAccount {
-            account_id,
-            unstaked_balance: account.unstaked.into(),
-            staked_balance: self
-                .staked_amount_from_num_shares_rounded_down(account.stake_shares)
-                .into(),
-            can_withdraw: account.unstaked_available_epoch_height <= env::epoch_height(),
-        }
+        let staking_pool = self.get_staking_pool_or_default(&account_id);
+        return staking_pool.get_account_info(&account_id);
     }
 
     /// Returns the number of accounts that have positive balance on this staking pool.

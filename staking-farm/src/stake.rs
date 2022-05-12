@@ -35,7 +35,7 @@ impl StakingContract {
     pub fn deposit(&mut self) {
         let need_to_restake = self.internal_ping();
 
-        self.internal_deposit();
+        self.internal_deposit(true);
 
         if need_to_restake {
             self.internal_restake();
@@ -47,7 +47,7 @@ impl StakingContract {
     pub fn deposit_and_stake(&mut self) {
         self.internal_ping();
 
-        let amount = self.internal_deposit();
+        let amount = self.internal_deposit(true);
         self.internal_stake(amount);
 
         self.internal_restake();
@@ -60,7 +60,7 @@ impl StakingContract {
 
         let account_id = env::predecessor_account_id();
         let account = self.internal_get_account(&account_id);
-        self.internal_withdraw(&account_id, account.unstaked);
+        self.internal_withdraw(&account_id, account.unstaked, true);
 
         if need_to_restake {
             self.internal_restake();
@@ -73,7 +73,7 @@ impl StakingContract {
         let need_to_restake = self.internal_ping();
 
         let amount: Balance = amount.into();
-        self.internal_withdraw(&env::predecessor_account_id(), amount);
+        self.internal_withdraw(&env::predecessor_account_id(), amount, false);
 
         if need_to_restake {
             self.internal_restake();
@@ -134,7 +134,7 @@ impl StakingContract {
         let account = self.internal_get_account(&account_id);
         if account.unstaked > MIN_BURN_AMOUNT {
             // TODO: replace with burn host function when available.
-            self.internal_withdraw(&account_id, account.unstaked);
+            self.internal_withdraw(&account_id, account.unstaked, false);
         }
     }
 
