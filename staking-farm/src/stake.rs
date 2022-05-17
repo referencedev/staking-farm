@@ -59,8 +59,8 @@ impl StakingContract {
         let need_to_restake = self.internal_ping();
 
         let account_id = env::predecessor_account_id();
-        let account = self.internal_get_account(&account_id);
-        self.internal_withdraw(&account_id, account.unstaked, true);
+        let account_unstaked = self.get_account_unstaked_balance(account_id.clone()).0;
+        self.internal_withdraw(&account_id, account_unstaked, true);
 
         if need_to_restake {
             self.internal_restake();
@@ -86,7 +86,7 @@ impl StakingContract {
         self.internal_ping();
 
         let account_id = env::predecessor_account_id();
-        let account = self.internal_get_account(&account_id);
+        let account = self.rewards_staked_staking_pool.internal_get_account(&account_id);
         self.internal_stake(account.unstaked);
 
         self.internal_restake();
@@ -131,7 +131,7 @@ impl StakingContract {
     /// Burns all the tokens that are unstaked.
     pub fn burn(&mut self) {
         let account_id = AccountId::new_unchecked(ZERO_ADDRESS.to_string());
-        let account = self.internal_get_account(&account_id);
+        let account = self.rewards_staked_staking_pool.internal_get_account(&account_id);
         if account.unstaked > MIN_BURN_AMOUNT {
             // TODO: replace with burn host function when available.
             self.internal_withdraw(&account_id, account.unstaked, false);

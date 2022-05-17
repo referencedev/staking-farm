@@ -126,7 +126,7 @@ impl StakingContract {
     ) -> (U256, Balance) {
         if let Some(distribution) = self.internal_calculate_distribution(
             &farm,
-            self.total_stake_shares - self.total_burn_shares,
+            self.rewards_staked_staking_pool.total_stake_shares - self.total_burn_shares,
         ) {
             if distribution.reward_round != farm.last_distribution.reward_round {
                 farm.last_distribution = distribution.clone();
@@ -187,9 +187,9 @@ impl StakingContract {
         token_id: &AccountId,
         amount: Balance,
     ) {
-        let mut account = self.internal_get_account(&account_id);
+        let mut account = self.rewards_staked_staking_pool.internal_get_account(&account_id);
         *account.amounts.entry(token_id.clone()).or_default() += amount;
-        self.internal_save_account(&account_id, &account);
+        self.rewards_staked_staking_pool.internal_save_account(&account_id, &account);
     }
 
     fn internal_claim(
@@ -198,7 +198,7 @@ impl StakingContract {
         claim_account_id: &AccountId,
         send_account_id: &AccountId,
     ) -> Promise {
-        let mut account = self.internal_get_account(&claim_account_id);
+        let mut account = self.rewards_staked_staking_pool.internal_get_account(&claim_account_id);
         self.internal_distribute_all_rewards(&mut account);
         let amount = account.amounts.remove(&token_id).unwrap_or(0);
         assert!(amount > 0, "ERR_ZERO_AMOUNT");
@@ -206,7 +206,7 @@ impl StakingContract {
             "{} receives {} of {} from {}",
             send_account_id, amount, token_id, claim_account_id
         ));
-        self.internal_save_account(&claim_account_id, &account);
+        self.rewards_staked_staking_pool.internal_save_account(&claim_account_id, &account);
         ext_fungible_token::ft_transfer(
             send_account_id.clone(),
             U128(amount),

@@ -120,11 +120,6 @@ pub struct StakingContract {
     pub last_epoch_height: EpochHeight,
     /// The last total balance of the account (consists of staked and unstaked balances).
     pub last_total_balance: Balance,
-    /// The total amount of shares. It should be equal to the total amount of shares across all
-    /// accounts.
-    pub total_stake_shares: NumStakeShares,
-    /// The total staked balance.
-    pub total_staked_balance: Balance,
     /// The total burn share balance, that will not be accounted in the farming.
     pub total_burn_shares: NumStakeShares,
     /// The total amount to burn that will be available.
@@ -133,8 +128,6 @@ pub struct StakingContract {
     pub reward_fee_fraction: UpdatableRewardFee,
     /// The fraction of the reward that gets burnt.
     pub burn_fee_fraction: Ratio,
-    /// Persistent map from an account ID to the corresponding account.
-    pub accounts: UnorderedMap<AccountId, Account>,
     /// Farm tokens.
     pub farms: Vector<Farm>,
     /// Active farms: indicies into `farms`.
@@ -224,12 +217,9 @@ impl StakingContract {
             stake_public_key: stake_public_key.into(),
             last_epoch_height: env::epoch_height(),
             last_total_balance: account_balance,
-            total_staked_balance,
-            total_stake_shares: NumStakeShares::from(total_staked_balance),
             total_burn_shares: 0,
             reward_fee_fraction: UpdatableRewardFee::new(reward_fee_fraction),
             burn_fee_fraction,
-            accounts: UnorderedMap::new(StorageKeys::Accounts),
             farms: Vector::new(StorageKeys::Farms),
             active_farms: Vec::new(),
             paused: false,

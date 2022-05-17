@@ -97,8 +97,8 @@ pub mod tests {
                     denominator: 0,
                 },
             );
-            let last_total_staked_balance = contract.total_staked_balance;
-            let last_total_stake_shares = contract.total_stake_shares;
+            let last_total_staked_balance = contract.rewards_staked_staking_pool.total_staked_balance;
+            let last_total_stake_shares = contract.rewards_staked_staking_pool.total_stake_shares;
             Emulator {
                 contract,
                 epoch_height: 0,
@@ -113,8 +113,8 @@ pub mod tests {
         }
 
         fn verify_stake_price_increase_guarantee(&mut self) {
-            let total_staked_balance = self.contract.total_staked_balance;
-            let total_stake_shares = self.contract.total_stake_shares;
+            let total_staked_balance = self.contract.rewards_staked_staking_pool.total_staked_balance;
+            let total_stake_shares = self.contract.rewards_staked_staking_pool.total_stake_shares;
             assert!(
                 U256::from(total_staked_balance) * U256::from(self.last_total_stake_shares)
                     >= U256::from(self.last_total_staked_balance) * U256::from(total_stake_shares),
@@ -145,7 +145,7 @@ pub mod tests {
         }
 
         pub fn simulate_stake_call(&mut self) {
-            let total_stake = self.contract.total_staked_balance;
+            let total_stake = self.contract.rewards_staked_staking_pool.total_staked_balance;
             // Stake action
             self.amount = self.amount + self.locked_amount - total_stake;
             self.locked_amount = total_stake;

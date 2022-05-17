@@ -81,7 +81,7 @@ impl StakingContract {
     pub fn get_pool_summary(&self) -> PoolSummary {
         PoolSummary {
             owner: StakingContract::get_owner_id(),
-            total_staked_balance: self.total_staked_balance,
+            total_staked_balance: self.rewards_staked_staking_pool.total_staked_balance + self.rewards_not_staked_staking_pool.total_staked_balance,
             reward_fee_fraction: self.reward_fee_fraction.current().clone(),
             next_reward_fee_fraction: self.reward_fee_fraction.next().clone(),
             burn_fee_fraction: self.burn_fee_fraction.clone(),
@@ -149,7 +149,7 @@ impl StakingContract {
         if account_id == AccountId::new_unchecked(ZERO_ADDRESS.to_string()) {
             return U128(0);
         }
-        let account = self.accounts.get(&account_id).expect("ERR_NO_ACCOUNT");
+        let account = self.rewards_staked_staking_pool.accounts.get(&account_id).expect("ERR_NO_ACCOUNT");
         let mut farm = self.farms.get(farm_id).expect("ERR_NO_FARM");
         let (_rps, reward) = self.internal_unclaimed_balance(&account, farm_id, &mut farm);
         let prev_reward = *account.amounts.get(&farm.token_id).unwrap_or(&0);
@@ -213,12 +213,12 @@ impl StakingContract {
 
     /// Returns the number of accounts that have positive balance on this staking pool.
     pub fn get_number_of_accounts(&self) -> u64 {
-        self.accounts.len()
+        self.rewards_staked_staking_pool.accounts.len()
     }
 
     /// Returns the list of accounts
     pub fn get_accounts(&self, from_index: u64, limit: u64) -> Vec<HumanReadableAccount> {
-        let keys = self.accounts.keys_as_vector();
+        let keys = self.rewards_staked_staking_pool.accounts.keys_as_vector();
 
         (from_index..std::cmp::min(from_index + limit, keys.len()))
             .map(|index| self.get_account(keys.get(index).unwrap()))
