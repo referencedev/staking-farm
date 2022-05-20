@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::any::Any;
 
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::{AccountId, Balance, EpochHeight};
@@ -75,5 +76,115 @@ impl Default for AccountWithReward {
             last_farm_reward_per_share: HashMap::new(),
             amounts: HashMap::new(),
         }
+    }
+}
+
+impl AccountWithReward{
+    pub fn add_to_tally(&mut self, amount: Balance){
+        if self.tally_below_zero{
+            if amount >= self.reward_tally {
+                self.reward_tally = amount - self.reward_tally;
+                self.tally_below_zero = !self.tally_below_zero; 
+            }else{
+                self.reward_tally -= amount;
+            }
+        }else{
+            self.reward_tally += amount;
+        }
+    }
+
+    pub fn subtract_from_tally(&mut self, amount: Balance){
+        if self.tally_below_zero{
+            self.reward_tally += amount;            
+        }else{
+            if amount > self.reward_tally {
+                self.reward_tally = amount - self.reward_tally;
+                self.tally_below_zero = !self.tally_below_zero; 
+            }else{
+                self.reward_tally -= amount;
+            }
+        }
+    }
+}
+
+pub trait AccountImpl{
+    fn update_last_farm_reward_per_share(&mut self, farm_id: u64, rps: U256);
+    fn get_account_stake_shares(&self) -> NumStakeShares;
+    fn update_farm_amounts(&mut self, farm_token_id: AccountId, claim_amount: Balance);
+    fn get_last_reward_per_share(&self, farm_id: u64) -> U256;
+    fn get_farm_amount(&self, farm_token_id: AccountId) -> Balance;
+    fn as_any(&self) -> &dyn Any;
+    fn as_any_mut(&mut self) -> &mut dyn Any;
+}
+
+impl AccountImpl for Account{
+    fn as_any(&self) -> &dyn Any {
+        return self;
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        return self;
+    }
+
+    fn get_farm_amount(&self, farm_token_id: AccountId) -> Balance {
+        return *self.amounts.get(&farm_token_id).unwrap_or(&0);
+    }
+
+    fn get_account_stake_shares(&self) -> NumStakeShares{
+        return self.stake_shares;
+    }
+
+    fn get_last_reward_per_share(&self, farm_id: u64) -> U256{
+        return self
+            .last_farm_reward_per_share
+            .get(&farm_id)
+            .cloned()
+            .unwrap_or(U256::zero());
+    }
+
+    fn update_last_farm_reward_per_share(&mut self, farm_id: u64, rps: U256){
+        self
+            .last_farm_reward_per_share
+            .insert(farm_id, rps);
+    }
+
+    fn update_farm_amounts(&mut self, farm_token_id: AccountId, claim_amount: Balance){
+        *self.amounts.entry(farm_token_id).or_default() += claim_amount;
+    }
+}
+
+impl AccountImpl for AccountWithReward{
+    fn get_account_stake_shares(&self) -> NumStakeShares{
+        return self.stake;
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        return self;
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        return self;
+    }
+
+    fn get_farm_amount(&self, farm_token_id: AccountId) -> Balance {
+        return *self.amounts.get(&farm_token_id).unwrap_or(&0);
+    }
+
+    fn get_last_reward_per_share(&self, farm_id: u64) -> U256{
+        return self
+            .last_farm_reward_per_share
+            .get(&farm_id)
+            .cloned()
+            .unwrap_or(U256::zero());
+    }
+
+    fn update_last_farm_reward_per_share(&mut self, farm_id: u64, rps: U256){
+        self
+            .last_farm_reward_per_share
+            .insert(farm_id, rps);
+    }
+
+    fn update_farm_amounts(&mut self, farm_token_id: AccountId, claim_amount: Balance){
+        *self.amounts.entry(farm_token_id).or_default() += claim_amount;
     }
 }
