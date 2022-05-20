@@ -18,6 +18,22 @@ pub fn charlie() -> AccountId {
     "charlie".parse().unwrap()
 }
 
+pub fn A() -> AccountId {
+    "aa".parse().unwrap()
+}
+pub fn B() -> AccountId {
+    "bb".parse().unwrap()
+}
+pub fn C() -> AccountId {
+    "cc".parse().unwrap()
+}
+pub fn D() -> AccountId {
+    "dd".parse().unwrap()
+}
+pub fn E() -> AccountId {
+    "ee".parse().unwrap()
+}
+
 pub fn ntoy(near_amount: Balance) -> Balance {
     near_amount * 10u128.pow(24)
 }
@@ -82,10 +98,12 @@ pub mod tests {
             owner: AccountId,
             stake_public_key: PublicKey,
             reward_fee_fraction: Ratio,
+            account_balance: Option<Balance>,
         ) -> Self {
+            let amount = account_balance.unwrap_or(ntoy(30));
             let context = VMContextBuilder::new()
                 .current_account_id(owner.clone())
-                .account_balance(ntoy(30))
+                .account_balance(amount)
                 .build();
             testing_env!(context.clone());
             let contract = StakingContract::new(
@@ -104,7 +122,7 @@ pub mod tests {
                 epoch_height: 0,
                 block_timestamp: 0,
                 block_index: 0,
-                amount: ntoy(30),
+                amount: amount,
                 locked_amount: 0,
                 last_total_staked_balance,
                 last_total_stake_shares,
@@ -162,11 +180,34 @@ pub mod tests {
             self.simulate_stake_call();
         }
 
+        pub fn deposit_and_stake_rewards_not_stake(&mut self, account: AccountId, amount: Balance) {
+            self.update_context(account.clone(), amount);
+            self.contract.deposit_rewards_not_stake();
+            self.amount += amount;
+            self.update_context(account, 0);
+            self.contract.stake(U128(amount));
+            self.simulate_stake_call();
+        }
+
+        pub fn deposit(&mut self, account: AccountId, amount: Balance){
+            self.update_context(account.clone(), amount);
+            self.contract.deposit();
+            self.amount += amount;
+        }
+
         pub fn skip_epochs(&mut self, num: EpochHeight) {
             self.epoch_height += num;
             self.block_index += num * 12 * 60 * 60;
             self.block_timestamp += num * ONE_EPOCH_TS;
             self.locked_amount = (self.locked_amount * (100 + u128::from(num))) / 100;
+            self.update_context(staking(), 0);
+        }
+
+        pub fn skip_epochs_and_set_reward(&mut self, num: EpochHeight, amount: Balance){
+            self.epoch_height += num;
+            self.block_index += num * 12 * 60 * 60;
+            self.block_timestamp += num * ONE_EPOCH_TS;
+            self.locked_amount = self.locked_amount + amount;
             self.update_context(staking(), 0);
         }
     }

@@ -161,6 +161,13 @@ impl StakingContract {
     ///
     /// ACCOUNT
     ///
+    
+    ///  /// Returns the rewards for the account, If the account is in the
+    /// staking pool that doesnt restake its rewards it will return somethind
+    /// If is in the other pool it will return 0
+    pub fn get_account_not_staked_rewards(&self, account_id: AccountId) -> U128{
+        self.get_account(account_id).rewards_for_withdraw
+    }
 
     /// Returns the unstaked balance of the given account.
     pub fn get_account_unstaked_balance(&self, account_id: AccountId) -> U128 {
