@@ -10,7 +10,7 @@ use near_sdk::{
 };
 use uint::construct_uint;
 
-use crate::account::{NumStakeShares};
+use crate::account::{NumStakeShares, Account};
 use crate::farm::Farm;
 use crate::internal::ZERO_ADDRESS;
 pub use crate::views::{HumanReadableAccount, HumanReadableFarm};
@@ -186,8 +186,85 @@ impl Ratio {
     }
 }
 
+#[derive(BorshDeserialize, BorshSerialize)]
+pub struct OldStakingContract {
+    /// The public key which is used for staking action. It's the public key of the validator node
+    /// that validates on behalf of the pool.
+    pub stake_public_key: PublicKey,
+    /// The last epoch height when `ping` was called.
+    pub last_epoch_height: EpochHeight,
+    /// The last total balance of the account (consists of staked and unstaked balances).
+    pub last_total_balance: Balance,
+    /// The total amount of shares. It should be equal to the total amount of shares across all
+    /// accounts.
+    pub total_stake_shares: NumStakeShares,
+    /// The total staked balance.
+    pub total_staked_balance: Balance,
+    /// The total burn share balance, that will not be accounted in the farming.
+    pub total_burn_shares: NumStakeShares,
+    /// The total amount to burn that will be available.
+    /// The fraction of the reward that goes to the owner of the staking pool for running the
+    /// validator node.
+    pub reward_fee_fraction: UpdatableRewardFee,
+    /// The fraction of the reward that gets burnt.
+    pub burn_fee_fraction: Ratio,
+    /// Persistent map from an account ID to the corresponding account.
+    pub accounts: UnorderedMap<AccountId, Account>,
+    /// Farm tokens.
+    pub farms: Vector<Farm>,
+    /// Active farms: indicies into `farms`.
+    pub active_farms: Vec<u64>,
+    /// Whether the staking is paused.
+    /// When paused, the account unstakes everything (stakes 0) and doesn't restake.
+    /// It doesn't affect the staking shares or reward distribution.
+    /// Pausing is useful for node maintenance. Only the owner can pause and resume staking.
+    /// The contract is not paused by default.
+    pub paused: bool,
+    /// Authorized users, allowed to add farms.
+    /// This is done to prevent farm spam with random tokens.
+    /// Should not be a large number.
+    pub authorized_users: UnorderedSet<AccountId>,
+    /// Authorized tokens for farms.
+    /// Required because any contract can call method with ft_transfer_call, so must verify that contract will accept it.
+    pub authorized_farm_tokens: UnorderedSet<AccountId>,
+}
+
 #[near_bindgen]
 impl StakingContract {
+
+    #[private]
+    #[init(ignore_state)]
+    pub fn migrate_state() -> Self{
+        let old_state: OldStakingContract = env::state_read().expect("failed");
+
+        let mut this = Self{
+            stake_public_key: old_state.stake_public_key,
+            last_epoch_height: old_state.last_epoch_height,
+            last_total_balance: old_state.last_total_balance,
+            total_burn_shares: 0,
+            reward_fee_fraction: old_state.reward_fee_fraction,
+            burn_fee_fraction: Ratio {
+                numerator: 0,
+                denominator: 0,
+            },
+            farms: old_state.farms,
+            active_farms: old_state.active_farms,
+            paused: old_state.paused,
+            authorized_users: old_state.authorized_users,
+            authorized_farm_tokens: old_state.authorized_farm_tokens,
+            rewards_staked_staking_pool: InnerStakingPool::new(NumStakeShares::from(old_state.total_staked_balance), old_state.total_staked_balance),
+            rewards_not_staked_staking_pool: InnerStakingPoolWithoutRewardsRestaked::new(),
+            account_pool_register: UnorderedMap::new(StorageKeys::AccountRegistry),
+        };
+
+        this.rewards_staked_staking_pool.accounts = old_state.accounts;
+        let owner_id = Self::get_owner_id();
+        this.internal_register_account_to_staking_pool(&owner_id, true);
+        this.internal_register_account_to_staking_pool(&AccountId::new_unchecked(ZERO_ADDRESS.to_string()), true);
+
+        return this;
+    }
+
     /// Initializes the contract with the given owner_id, initial staking public key (with ED25519
     /// curve) and initial reward fee fraction that owner charges for the validation work.
     ///
