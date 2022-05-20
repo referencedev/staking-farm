@@ -149,10 +149,12 @@ impl StakingContract {
         if account_id == AccountId::new_unchecked(ZERO_ADDRESS.to_string()) {
             return U128(0);
         }
-        let account = self.rewards_staked_staking_pool.accounts.get(&account_id).expect("ERR_NO_ACCOUNT");
+        let staking_pool = self.get_staking_pool_or_default(&account_id);
+        
+        let account = staking_pool.get_account_impl(&account_id);
         let mut farm = self.farms.get(farm_id).expect("ERR_NO_FARM");
-        let (_rps, reward) = self.internal_unclaimed_balance(&account, farm_id, &mut farm);
-        let prev_reward = *account.amounts.get(&farm.token_id).unwrap_or(&0);
+        let (_rps, reward) = self.internal_unclaimed_balance(account.as_ref(), farm_id, &mut farm, staking_pool.does_pool_stake_staking_rewards());
+        let prev_reward = account.get_farm_amount(farm.token_id);
         U128(reward + prev_reward)
     }
 
@@ -213,15 +215,34 @@ impl StakingContract {
 
     /// Returns the number of accounts that have positive balance on this staking pool.
     pub fn get_number_of_accounts(&self) -> u64 {
-        self.rewards_staked_staking_pool.accounts.len()
+        self.rewards_staked_staking_pool.accounts.len() + self.rewards_not_staked_staking_pool.accounts.len()
     }
 
     /// Returns the list of accounts
     pub fn get_accounts(&self, from_index: u64, limit: u64) -> Vec<HumanReadableAccount> {
-        let keys = self.rewards_staked_staking_pool.accounts.keys_as_vector();
+        let keys = self
+            .rewards_staked_staking_pool
+            .accounts
+            .keys_as_vector();
+        let upper_bound = std::cmp::min(from_index + limit, keys.len());
 
-        (from_index..std::cmp::min(from_index + limit, keys.len()))
+        let mut result = (from_index..upper_bound)
             .map(|index| self.get_account(keys.get(index).unwrap()))
-            .collect()
+            .collect::<Vec<HumanReadableAccount>>();
+
+        if upper_bound - (result.len() as u64) > 0 {
+            let other_keys = self
+                .rewards_not_staked_staking_pool
+                .accounts
+                .keys_as_vector();
+                
+            let other_upper_bound = std::cmp::min(upper_bound - (result.len() as u64), other_keys.len());
+            let other_result = (0..other_upper_bound)
+                .map(|index| self.get_account(other_keys.get(index).unwrap()))
+                .collect::<Vec<HumanReadableAccount>>();
+            result.extend(other_result);
+        }
+
+        return result;
     }
 }

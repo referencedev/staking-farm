@@ -1,8 +1,9 @@
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::{env, log, Balance, AccountId};
 use near_sdk::collections::UnorderedMap;
-use crate::account::{Account, AccountWithReward, NumStakeShares};
-use crate::StorageKeys;
+use crate::*;
+use crate::account::{Account, AccountWithReward, AccountImpl, NumStakeShares};
+use crate::{StorageKeys};
 use uint::construct_uint;
 use crate::views::HumanReadableAccount;
 construct_uint! {
@@ -15,12 +16,12 @@ pub trait StakingPool{
     fn get_account_info(&self, account_id: &AccountId) -> HumanReadableAccount;
     fn deposit(&mut self, account_id: &AccountId, amount: Balance);
     fn withdraw(&mut self, account_id: &AccountId, amount: Balance) -> bool;
-    /*
-    fn stake(&mut self, account_id: &AccountId, amount: Balance);
-    fn unstake(&mut self, account_id: &AccountId, amount: Balance);
-    fn get_account_unstaked_balance(&self, account_id: &AccountId) -> Balance;
-    
-    */
+    fn stake(&mut self, account_id: &AccountId, amount: Balance, account_impl: &mut dyn AccountImpl);
+    fn get_account_impl(&self, account_id: &AccountId) -> Box<dyn AccountImpl>;
+    fn does_pool_stake_staking_rewards(&self) -> bool;
+
+    fn unstake(&mut self, account_id: &AccountId, amount: Balance, account_impl: &mut dyn AccountImpl);
+
     /// send rewards to receiver account id
     /// and remove account from account pool register if needed
     /// returns amount to send and flag indicating wether an account should be removed
@@ -288,6 +289,15 @@ impl StakingPool for InnerStakingPool{
         return self.total_staked_balance;
     }
 
+    fn does_pool_stake_staking_rewards(&self) -> bool {
+        return true;
+    }
+
+    fn get_account_impl(&self, account_id: &AccountId) -> Box<dyn AccountImpl> {
+        let account = self.internal_get_account(&account_id);
+        return Box::new(account);
+    }
+
     fn get_account_info(&self, account_id: &AccountId) -> HumanReadableAccount {
         let account = self.internal_get_account(&account_id);
         return HumanReadableAccount {
@@ -315,7 +325,7 @@ impl StakingPool for InnerStakingPool{
         );
     }
 
-    fn withdraw_not_staked_rewards(&mut self, account_id: &AccountId) -> (Balance, bool){
+    fn withdraw_not_staked_rewards(&mut self, _account_id: &AccountId) -> (Balance, bool){
         return (0, false);
     }
 
@@ -341,11 +351,131 @@ impl StakingPool for InnerStakingPool{
 
         return account_has_been_removed;
     }
+
+    fn stake(&mut self, account_id: &AccountId, amount: Balance, account_impl: &mut dyn AccountImpl) {
+        let account = account_impl
+                                        .as_any_mut()
+                                        .downcast_mut::<Account>()
+                                        .unwrap();
+        
+        let num_shares = self.num_shares_from_staked_amount_rounded_down(amount);
+        assert!(
+            num_shares > 0,
+            "The calculated number of \"stake\" shares received for staking should be positive"
+        );
+        // The amount of tokens the account will be charged from the unstaked balance.
+        // Rounded down to avoid overcharging the account to guarantee that the account can always
+        // unstake at least the same amount as staked.
+        let charge_amount = self.staked_amount_from_num_shares_rounded_down(num_shares);
+        assert!(
+            charge_amount > 0,
+            "Invariant violation. Calculated staked amount must be positive, because \"stake\" share price should be at least 1"
+        );
+
+        assert!(
+            account.unstaked >= charge_amount,
+            "Not enough unstaked balance to stake"
+        );
+        account.unstaked -= charge_amount;
+        account.stake_shares += num_shares;
+        self.internal_save_account(&account_id, &account);
+
+        // The staked amount that will be added to the total to guarantee the "stake" share price
+        // never decreases. The difference between `stake_amount` and `charge_amount` is paid
+        // from the allocated STAKE_SHARE_PRICE_GUARANTEE_FUND.
+        let stake_amount = self.staked_amount_from_num_shares_rounded_up(num_shares);
+
+        self.total_staked_balance += stake_amount;
+        self.total_stake_shares += num_shares;
+
+        log!(
+            "@{} staking {}. Received {} new staking shares. Total {} unstaked balance and {} \
+             staking shares",
+            account_id,
+            charge_amount,
+            num_shares,
+            account.unstaked,
+            account.stake_shares
+        );
+        log!(
+            "Contract total staked balance is {}. Total number of shares {}",
+            self.total_staked_balance,
+            self.total_stake_shares
+        );
+    }
+
+    fn unstake(&mut self, account_id: &AccountId, amount: Balance, account_impl: &mut dyn AccountImpl){
+        let account = account_impl
+                                        .as_any_mut()
+                                        .downcast_mut::<Account>()
+                                        .unwrap();
+
+        assert!(
+            self.total_staked_balance > 0,
+            "The contract doesn't have staked balance"
+        );
+        // Calculate the number of shares required to unstake the given amount.
+        // NOTE: The number of shares the account will pay is rounded up.
+        let num_shares = self.num_shares_from_staked_amount_rounded_up(amount);
+        assert!(
+            num_shares > 0,
+            "Invariant violation. The calculated number of \"stake\" shares for unstaking should be positive"
+        );
+        assert!(
+            account.stake_shares >= num_shares,
+            "Not enough staked balance to unstake"
+        );
+
+        // Calculating the amount of tokens the account will receive by unstaking the corresponding
+        // number of "stake" shares, rounding up.
+        let receive_amount = self.staked_amount_from_num_shares_rounded_up(num_shares);
+        assert!(
+            receive_amount > 0,
+            "Invariant violation. Calculated staked amount must be positive, because \"stake\" share price should be at least 1"
+        );
+
+        account.stake_shares -= num_shares;
+        account.unstaked += receive_amount;
+        account.unstaked_available_epoch_height = env::epoch_height() + NUM_EPOCHS_TO_UNLOCK;
+        self.internal_save_account(&account_id, &account);
+
+        // The amount tokens that will be unstaked from the total to guarantee the "stake" share
+        // price never decreases. The difference between `receive_amount` and `unstake_amount` is
+        // paid from the allocated STAKE_SHARE_PRICE_GUARANTEE_FUND.
+        let unstake_amount = self.staked_amount_from_num_shares_rounded_down(num_shares);
+
+        self.total_staked_balance -= unstake_amount;
+        self.total_stake_shares -= num_shares;
+
+        log!(
+            "@{} unstaking {}. Spent {} staking shares. Total {} unstaked balance and {} \
+             staking shares",
+            account_id,
+            receive_amount,
+            num_shares,
+            account.unstaked,
+            account.stake_shares
+        );
+        log!(
+            "Contract total staked balance is {}. Total number of shares {}",
+            self.total_staked_balance,
+            self.total_stake_shares
+        );
+    }
 }
 
 impl StakingPool for InnerStakingPoolWithoutRewardsRestaked{
     fn get_total_staked_balance(&self) -> Balance {
         return self.total_staked_balance;
+    }
+
+    fn does_pool_stake_staking_rewards(&self) -> bool {
+        return false;
+    }
+
+    fn get_account_impl(&self, account_id: &AccountId) -> Box<dyn AccountImpl> {
+        let account = self.internal_get_account(&account_id);
+        return Box::new(account);
     }
 
     fn get_account_info(&self, account_id: &AccountId) -> HumanReadableAccount {
@@ -403,5 +533,61 @@ impl StakingPool for InnerStakingPoolWithoutRewardsRestaked{
         );
 
         return account_has_been_removed;
+    }
+
+    fn stake(&mut self, account_id: &AccountId, amount: Balance, account_impl: &mut dyn AccountImpl) {
+        assert!(amount > 0, "Staking amount should be positive");
+        let account = account_impl
+                                        .as_any_mut()
+                                        .downcast_mut::<AccountWithReward>()
+                                        .unwrap();
+        account.unstaked -= amount;
+        account.stake += amount;
+        account.add_to_tally(self.reward_per_token.multiply(amount));
+        self.total_staked_balance+=amount;
+
+        self.internal_save_account(account_id, &account);
+
+        log!(
+            "@{} staking {}. Total {} unstaked balance and {} staked amount",
+            account_id, amount, account.unstaked, account.stake
+        );
+    }
+
+    fn unstake(&mut self, account_id: &AccountId, amount: Balance, account_impl: &mut dyn AccountImpl){
+        let account = account_impl
+                                        .as_any_mut()
+                                        .downcast_mut::<AccountWithReward>()
+                                        .unwrap();
+
+        assert!(
+            self.total_staked_balance > 0,
+            "The contract doesn't have staked balance"
+        );
+        assert!(
+            amount > 0,
+            "The unstaking amount should be positive"
+        );
+        assert!(
+            account.stake >= amount,
+            "Not enough staked balance to unstake"
+        );
+
+        account.stake -= amount;
+        account.unstaked += amount;
+        account.subtract_from_tally(self.reward_per_token.multiply(amount));
+        account.unstaked_available_epoch_height = env::epoch_height() + NUM_EPOCHS_TO_UNLOCK;
+        self.internal_save_account(&account_id, &account);
+
+        self.total_staked_balance -= amount;
+
+        log!(
+            "@{} unstaking {}. Total {} unstaked balance and {} staking amount",
+            account_id, amount, account.unstaked, account.stake
+        );
+        log!(
+            "Contract inner staking pool total staked balance is {}",
+            self.total_staked_balance
+        );
     }
 }

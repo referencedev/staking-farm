@@ -42,12 +42,37 @@ impl StakingContract {
         }
     }
 
+    /// Deposits the attached amount unto the inner account of the precedessor, but the inner account
+    /// is attached to the staking pool that doesnt restake rewards
+    #[payable]
+    pub fn deposit_rewards_not_stake(&mut self){
+        let need_to_restake = self.internal_ping();
+
+        self.internal_deposit(false);
+
+        if need_to_restake {
+            self.internal_restake();
+        }
+    }
+
     /// Deposits the attached amount into the inner account of the predecessor and stakes it.
     #[payable]
     pub fn deposit_and_stake(&mut self) {
         self.internal_ping();
 
         let amount = self.internal_deposit(true);
+        self.internal_stake(amount);
+
+        self.internal_restake();
+    }
+
+    /// Deposits the attached amount into the inner account of the predecessor and stakes it to the inner pool
+    /// that doesnt restake rewards
+    #[payable]
+    pub fn deposit_and_stake_rewards_not_stake(&mut self){
+        self.internal_ping();
+
+        let amount = self.internal_deposit(false);
         self.internal_stake(amount);
 
         self.internal_restake();
@@ -80,14 +105,24 @@ impl StakingContract {
         }
     }
 
+     /// Withdraw rewards that are being collected for accounts that doesnt restake their rewards
+     pub fn withdraw_rewards(&mut self, receiver_account_id: AccountId){
+        let need_to_restake = self.internal_ping();
+        
+        self.internal_withdraw_rewards(&receiver_account_id);
+        if need_to_restake{
+            self.internal_restake();
+        }
+    }
+
     /// Stakes all available unstaked balance from the inner account of the predecessor.
     pub fn stake_all(&mut self) {
         // Stake action always restakes
         self.internal_ping();
 
         let account_id = env::predecessor_account_id();
-        let account = self.rewards_staked_staking_pool.internal_get_account(&account_id);
-        self.internal_stake(account.unstaked);
+        let unstaked_balance = self.get_account_unstaked_balance(account_id.clone());
+        self.internal_stake(unstaked_balance.0);
 
         self.internal_restake();
     }
