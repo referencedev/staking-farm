@@ -1,6 +1,6 @@
 [package]
 name = "staking-farm"
-version = "1.0.0"
+version = "1.1.0"
 authors = ["referencedev <goi65io3903d@protonmail.com>"]
 edition = "2018"
 publish = false

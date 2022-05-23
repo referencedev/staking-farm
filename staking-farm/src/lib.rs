@@ -13,8 +13,8 @@ use uint::construct_uint;
 use crate::account::{NumStakeShares, Account};
 use crate::farm::Farm;
 use crate::internal::ZERO_ADDRESS;
-pub use crate::views::{HumanReadableAccount, HumanReadableFarm};
 use crate::staking_pool::{InnerStakingPool, InnerStakingPoolWithoutRewardsRestaked, Fraction};
+pub use crate::views::{HumanReadableAccount, HumanReadableFarm, PoolSummary};
 
 mod staking_pool;
 mod account;
@@ -121,8 +121,6 @@ pub struct StakingContract {
     pub last_epoch_height: EpochHeight,
     /// The last total balance of the account (consists of staked and unstaked balances).
     pub last_total_balance: Balance,
-    /// The total burn share balance, that will not be accounted in the farming.
-    pub total_burn_shares: NumStakeShares,
     /// The total amount to burn that will be available.
     /// The fraction of the reward that goes to the owner of the staking pool for running the
     /// validator node.
@@ -241,24 +239,20 @@ impl StakingContract {
             stake_public_key: old_state.stake_public_key,
             last_epoch_height: old_state.last_epoch_height,
             last_total_balance: old_state.last_total_balance,
-            total_burn_shares: 0,
             reward_fee_fraction: old_state.reward_fee_fraction,
-            burn_fee_fraction: Ratio {
-                numerator: 0,
-                denominator: 0,
-            },
+            burn_fee_fraction: old_state.burn_fee_fraction,
             farms: old_state.farms,
             active_farms: old_state.active_farms,
             paused: old_state.paused,
             authorized_users: old_state.authorized_users,
             authorized_farm_tokens: old_state.authorized_farm_tokens,
-            rewards_staked_staking_pool: InnerStakingPool::new(NumStakeShares::from(old_state.total_staked_balance), old_state.total_staked_balance),
+            rewards_staked_staking_pool: InnerStakingPool::new(NumStakeShares::from(old_state.total_staked_balance), old_state.total_staked_balance, old_state.total_burn_shares),
             rewards_not_staked_staking_pool: InnerStakingPoolWithoutRewardsRestaked::new(),
             account_pool_register: UnorderedMap::new(StorageKeys::AccountRegistry),
         };
 
         this.rewards_staked_staking_pool.accounts = old_state.accounts;
-        let owner_id = Self::get_owner_id();
+        let owner_id = Self::internal_get_owner_id();
         this.internal_register_account_to_staking_pool(&owner_id, true);
         this.internal_register_account_to_staking_pool(&AccountId::new_unchecked(ZERO_ADDRESS.to_string()), true);
 
@@ -295,7 +289,6 @@ impl StakingContract {
             stake_public_key: stake_public_key.into(),
             last_epoch_height: env::epoch_height(),
             last_total_balance: account_balance,
-            total_burn_shares: 0,
             reward_fee_fraction: UpdatableRewardFee::new(reward_fee_fraction),
             burn_fee_fraction,
             farms: Vector::new(StorageKeys::Farms),
@@ -303,7 +296,7 @@ impl StakingContract {
             paused: false,
             authorized_users: UnorderedSet::new(StorageKeys::AuthorizedUsers),
             authorized_farm_tokens: UnorderedSet::new(StorageKeys::AuthorizedFarmTokens),
-            rewards_staked_staking_pool: InnerStakingPool::new(NumStakeShares::from(total_staked_balance), total_staked_balance),
+            rewards_staked_staking_pool: InnerStakingPool::new(NumStakeShares::from(total_staked_balance), total_staked_balance, 0),
             rewards_not_staked_staking_pool: InnerStakingPoolWithoutRewardsRestaked::new(),
             account_pool_register: UnorderedMap::new(StorageKeys::AccountRegistry),
         };
@@ -330,12 +323,11 @@ mod tests {
     use near_contract_standards::fungible_token::receiver::FungibleTokenReceiver;
     use near_sdk::json_types::U64;
     use near_sdk::mock::VmAction;
-    use near_sdk::serde_json;
+    use near_sdk::serde_json::json;
     use near_sdk::test_utils::{get_created_receipts, testing_env_with_promise_results};
 
     use crate::test_utils::tests::*;
     use crate::test_utils::*;
-    use crate::token_receiver::FarmingDetails;
 
     use super::*;
 
@@ -759,12 +751,12 @@ mod tests {
         emulator.contract.ft_on_transfer(
             owner(),
             U128(amount),
-            serde_json::to_string(&FarmingDetails {
-                name: "test".to_string(),
-                start_date: U64(0),
-                end_date: U64(ONE_EPOCH_TS * 4),
+            json!({
+                "name": "test".to_string(),
+                "start_date": U64(0),
+                "end_date": U64(ONE_EPOCH_TS * 4),
             })
-            .unwrap(),
+            .to_string(),
         );
     }
 

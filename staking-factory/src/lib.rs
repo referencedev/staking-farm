@@ -439,7 +439,7 @@ mod tests {
     }
 
     pub fn add_staking_contract(context: &mut VMContext) -> Base58CryptoHash {
-        context.input = include_bytes!("../../res/staking_farm_local.wasm").to_vec();
+        context.input = include_bytes!("../../res/staking_farm_release.wasm").to_vec();
         let hash = get_hash(&context.input);
         testing_env!(context.clone());
         store_contract();
@@ -505,6 +505,9 @@ mod tests {
         let mut contract = StakingPoolFactory::new(account_near(), account_whitelist());
         let hash = add_staking_contract(&mut context);
 
+        contract.allow_contract(hash);
+        assert!(contract.is_contract_allowed(&hash));
+
         // Checking the pool is still whitelisted
         context.is_view = true;
         testing_env!(context.clone());
@@ -513,7 +516,7 @@ mod tests {
 
         context.is_view = false;
         context.predecessor_account_id = account_tokens_owner().into();
-        context.attached_deposit = ntoy(20);
+        context.attached_deposit = MIN_ATTACHED_BALANCE / 2;
         testing_env!(context.clone());
         contract.create_staking_pool(
             staking_pool_id(),

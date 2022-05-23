@@ -27,6 +27,10 @@ pub struct Account {
     pub last_farm_reward_per_share: HashMap<u64, U256>,
     /// Farmed tokens withdrawn from the farm but not from the contract.
     pub amounts: HashMap<AccountId, Balance>,
+    /// Is this a burn account.
+    /// Note: It's not persisted in the state, but initialized during internal_get_account.
+    #[borsh_skip]
+    pub is_burn_account: bool,
 }
 
 impl Default for Account {
@@ -37,6 +41,7 @@ impl Default for Account {
             unstaked_available_epoch_height: 0,
             last_farm_reward_per_share: HashMap::new(),
             amounts: HashMap::new(),
+            is_burn_account: false,
         }
     }
 }
@@ -115,11 +120,16 @@ pub trait AccountImpl{
     fn get_farm_amount(&self, farm_token_id: AccountId) -> Balance;
     fn as_any(&self) -> &dyn Any;
     fn as_any_mut(&mut self) -> &mut dyn Any;
+    fn is_burn_account(&self) -> bool;
 }
 
 impl AccountImpl for Account{
     fn as_any(&self) -> &dyn Any {
         return self;
+    }
+
+    fn is_burn_account(&self) -> bool {
+        return self.is_burn_account;
     }
 
     fn as_any_mut(&mut self) -> &mut dyn Any {
@@ -156,6 +166,10 @@ impl AccountImpl for Account{
 impl AccountImpl for AccountWithReward{
     fn get_account_stake_shares(&self) -> NumStakeShares{
         return self.stake;
+    }
+
+    fn is_burn_account(&self) -> bool {
+        return false;
     }
 
     fn as_any_mut(&mut self) -> &mut dyn Any {

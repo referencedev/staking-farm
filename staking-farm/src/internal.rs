@@ -1,3 +1,4 @@
+use crate::owner::{FACTORY_KEY, OWNER_KEY};
 use crate::stake::ext_self;
 use crate::*;
 use near_sdk::log;
@@ -158,7 +159,7 @@ impl StakingContract {
 
             // Now buying "stake" shares for the burn.
             let num_burn_shares = self.rewards_staked_staking_pool.num_shares_from_staked_amount_rounded_down(burn_fee);
-            self.total_burn_shares += num_burn_shares;
+            self.rewards_staked_staking_pool.total_burn_shares += num_burn_shares;
 
             // Now buying "stake" shares for the contract owner at the new share price.
             let num_owner_shares = self.rewards_staked_staking_pool.num_shares_from_staked_amount_rounded_down(owners_fee);
@@ -167,7 +168,7 @@ impl StakingContract {
                 &AccountId::new_unchecked(ZERO_ADDRESS.to_string()),
                 num_burn_shares,
             );
-            self.internal_add_shares(&StakingContract::get_owner_id(), num_owner_shares);
+            self.internal_add_shares(&StakingContract::internal_get_owner_id(), num_owner_shares);
 
             // Increasing the total staked balance by the owners fee, no matter whether the owner
             // received any shares or not.
@@ -267,5 +268,26 @@ impl StakingContract {
             Promise::new(receiver_account_id.clone()).transfer(reward);
             self.last_total_balance -= reward;
         }
+    }
+
+    /// Returns current contract version.
+    pub(crate) fn internal_get_version() -> String {
+        format!("{}:{}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"))
+    }
+
+    /// Returns current owner from the storage.
+    pub(crate) fn internal_get_owner_id() -> AccountId {
+        AccountId::new_unchecked(
+            String::from_utf8(env::storage_read(OWNER_KEY).expect("MUST HAVE OWNER"))
+                .expect("INTERNAL_FAIL"),
+        )
+    }
+
+    /// Returns current contract factory.
+    pub(crate) fn internal_get_factory_id() -> AccountId {
+        AccountId::new_unchecked(
+            String::from_utf8(env::storage_read(FACTORY_KEY).expect("MUST HAVE FACTORY"))
+                .expect("INTERNAL_FAIL"),
+        )
     }
 }

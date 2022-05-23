@@ -34,6 +34,8 @@ pub trait StakingPool{
 pub struct InnerStakingPool{
     /// The total amount of shares the staking pool has across the contract
     pub total_stake_shares: NumStakeShares,
+    /// The total burn share balance, that will not be accounted in the farming.
+    pub total_burn_shares: NumStakeShares,
     /// The total staked balance.
     pub total_staked_balance: Balance,
     /// Persistent map from an account ID to the corresponding account.
@@ -138,10 +140,12 @@ impl InnerStakingPool{
     /// Constructor
     pub fn new(
         stake_shares: NumStakeShares,
-        staked_balance: Balance
+        staked_balance: Balance,
+        total_burn_shares: NumStakeShares,
     ) -> Self{
         let this = Self{
             accounts: UnorderedMap::new(StorageKeys::Accounts),
+            total_burn_shares: total_burn_shares,
             total_stake_shares: stake_shares,
             total_staked_balance: staked_balance
         };
@@ -151,7 +155,9 @@ impl InnerStakingPool{
 
     /// Inner method to get the given account or a new default value account.
     pub(crate) fn internal_get_account(&self, account_id: &AccountId) -> Account {
-        self.accounts.get(account_id).unwrap_or_default()
+        let mut account = self.accounts.get(account_id).unwrap_or_default();
+        account.is_burn_account = account_id.as_str() == ZERO_ADDRESS;
+        account
     }
 
     /// Inner method to save the given account for a given account ID.
@@ -446,6 +452,9 @@ impl StakingPool for InnerStakingPool{
 
         self.total_staked_balance -= unstake_amount;
         self.total_stake_shares -= num_shares;
+        if account.is_burn_account {
+            self.total_burn_shares -= num_shares;
+        }
 
         log!(
             "@{} unstaking {}. Spent {} staking shares. Total {} unstaked balance and {} \
