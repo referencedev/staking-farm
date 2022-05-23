@@ -1208,6 +1208,7 @@ mod tests {
         );
 
         emulator.skip_epochs_and_set_reward(1, 0);
+        emulator.contract.ping();
         assert!(almost_equal(
             emulator.contract.get_unclaimed_reward(charlie(), 0).0,
             charlie_farmed + (farm_amount / 4 * 4 / 7),
@@ -1217,5 +1218,12 @@ mod tests {
         emulator.update_context(alice(), 1);
         emulator.contract.claim(bob(), None);
         assert_eq!(emulator.contract.get_unclaimed_reward(alice(), 0).0, 0);
+        emulator.contract.unstake_all();
+        emulator.simulate_stake_call();
+
+        assert_eq!(emulator.contract.get_account_staked_balance(alice()).0, 0);
+        emulator.skip_epochs_and_set_reward(1, 0);
+        assert_eq!(emulator.contract.get_account_staked_balance(charlie()). 0, ntoy(400));
+        assert!(almost_equal(emulator.contract.get_unclaimed_reward(charlie(), 0).0, charlie_farmed + (farm_amount / 4 * 4 / 7) + farm_amount/4 / 11 * 8, ntoy(1) / 100));
     }
 }
