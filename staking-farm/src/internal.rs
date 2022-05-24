@@ -238,7 +238,7 @@ impl StakingContract {
         }
     }
 
-    fn does_account_stake_his_rewards(&self, account_id: &AccountId) -> bool{
+    pub fn does_account_stake_his_rewards(&self, account_id: &AccountId) -> bool{
         let account_staking_pool_option = self.account_pool_register.get(&account_id);
         assert!(account_staking_pool_option.is_some(), "Account {} should be registered for one of the staking pools", account_id);
 

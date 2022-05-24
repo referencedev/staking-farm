@@ -22,6 +22,8 @@ pub trait StakingPool{
 
     fn unstake(&mut self, account_id: &AccountId, amount: Balance, account_impl: &mut dyn AccountImpl);
 
+    fn save_account(&mut self, account_id: &AccountId, account_impl: &dyn AccountImpl);
+
     /// send rewards to receiver account id
     /// and remove account from account pool register if needed
     /// returns amount to send and flag indicating wether an account should be removed
@@ -471,6 +473,16 @@ impl StakingPool for InnerStakingPool{
             self.total_stake_shares
         );
     }
+
+    fn save_account(&mut self, account_id: &AccountId, account_impl: &dyn AccountImpl) {
+        let account = account_impl
+                                        .as_any()
+                                        .downcast_ref::<Account>()
+                                        .unwrap();
+
+        self.internal_save_account(account_id, &account);
+    }
+
 }
 
 impl StakingPool for InnerStakingPoolWithoutRewardsRestaked{
@@ -598,5 +610,14 @@ impl StakingPool for InnerStakingPoolWithoutRewardsRestaked{
             "Contract inner staking pool total staked balance is {}",
             self.total_staked_balance
         );
+    }
+
+    fn save_account(&mut self, account_id: &AccountId, account_impl: &dyn AccountImpl) {
+        let account = account_impl
+                                        .as_any()
+                                        .downcast_ref::<AccountWithReward>()
+                                        .unwrap();
+
+        self.internal_save_account(account_id, &account);
     }
 }

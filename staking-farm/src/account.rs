@@ -118,6 +118,7 @@ pub trait AccountImpl{
     fn update_farm_amounts(&mut self, farm_token_id: AccountId, claim_amount: Balance);
     fn get_last_reward_per_share(&self, farm_id: u64) -> U256;
     fn get_farm_amount(&self, farm_token_id: AccountId) -> Balance;
+    fn remove_farm_amount(&mut self, farm_token_id: &AccountId) -> Balance;
     fn as_any(&self) -> &dyn Any;
     fn as_any_mut(&mut self) -> &mut dyn Any;
     fn is_burn_account(&self) -> bool;
@@ -138,6 +139,10 @@ impl AccountImpl for Account{
 
     fn get_farm_amount(&self, farm_token_id: AccountId) -> Balance {
         return *self.amounts.get(&farm_token_id).unwrap_or(&0);
+    }
+
+    fn remove_farm_amount(&mut self, farm_token_id: &AccountId) -> Balance {
+        return self.amounts.remove(farm_token_id).unwrap_or(0);
     }
 
     fn get_account_stake_shares(&self) -> NumStakeShares{
@@ -182,6 +187,10 @@ impl AccountImpl for AccountWithReward{
 
     fn get_farm_amount(&self, farm_token_id: AccountId) -> Balance {
         return *self.amounts.get(&farm_token_id).unwrap_or(&0);
+    }
+
+    fn remove_farm_amount(&mut self, farm_token_id: &AccountId) -> Balance {
+        return self.amounts.remove(farm_token_id).unwrap_or(0);
     }
 
     fn get_last_reward_per_share(&self, farm_id: u64) -> U256{

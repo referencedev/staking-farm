@@ -3,6 +3,7 @@ use near_sdk::{assert_one_yocto, is_promise_success, promise_result_as_success, 
 
 use crate::account::AccountImpl;
 use crate::stake::ext_self;
+use crate::staking_pool::{StakingPool};
 use crate::*;
 
 const SESSION_INTERVAL: u64 = 1_000_000_000;
@@ -279,9 +280,10 @@ impl StakingContract {
         token_id: &AccountId,
         amount: Balance,
     ) {
-        let mut account = self.rewards_staked_staking_pool.internal_get_account(&account_id);
-        *account.amounts.entry(token_id.clone()).or_default() += amount;
-        self.rewards_staked_staking_pool.internal_save_account(&account_id, &account);
+        let staking_pool = self.get_staking_pool_or_create(account_id, true);
+        let mut account = staking_pool.get_account_impl(&account_id);
+        account.update_farm_amounts(token_id.clone(), amount);
+        staking_pool.save_account(account_id, account.as_ref());
     }
 
     fn internal_claim(
@@ -290,15 +292,25 @@ impl StakingContract {
         claim_account_id: &AccountId,
         send_account_id: &AccountId,
     ) -> Promise {
-        let mut account = self.rewards_staked_staking_pool.internal_get_account(&claim_account_id);
-        self.internal_distribute_all_rewards(&mut account, true);
-        let amount = account.amounts.remove(&token_id).unwrap_or(0);
-        assert!(amount > 0, "ERR_ZERO_AMOUNT");
+        let account_staking_rewards = self.does_account_stake_his_rewards(claim_account_id);
+        let mut amount: Balance = 0;
+        if account_staking_rewards {
+            let mut account = self.rewards_staked_staking_pool.get_account_impl(claim_account_id);
+            self.internal_distribute_all_rewards(account.as_mut(), true);
+            amount = account.remove_farm_amount(token_id);
+            assert!(amount > 0, "ERR_ZERO_AMOUNT");
+            self.rewards_staked_staking_pool.save_account(claim_account_id, account.as_ref());
+        } else {
+            let mut account = self.rewards_staked_staking_pool.get_account_impl(claim_account_id);
+            self.internal_distribute_all_rewards(account.as_mut(), false);
+            amount = account.remove_farm_amount(token_id);
+            assert!(amount > 0, "ERR_ZERO_AMOUNT");
+            self.rewards_staked_staking_pool.save_account(claim_account_id, account.as_ref());
+        }
         env::log_str(&format!(
             "{} receives {} of {} from {}",
             send_account_id, amount, token_id, claim_account_id
         ));
-        self.rewards_staked_staking_pool.internal_save_account(&claim_account_id, &account);
         ext_fungible_token::ft_transfer(
             send_account_id.clone(),
             U128(amount),
