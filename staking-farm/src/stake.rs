@@ -42,7 +42,7 @@ impl StakingContract {
         }
     }
 
-    /// Deposits the attached amount unto the inner account of the precedessor, but the inner account
+    /// Deposits the attached amount into the inner account of the precedessor, but the inner account
     /// is attached to the staking pool that doesnt restake rewards
     #[payable]
     pub fn deposit_rewards_not_stake(&mut self){

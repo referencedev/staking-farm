@@ -155,8 +155,8 @@ impl StakingContract {
     /// ACCOUNT
     ///
     
-    ///  /// Returns the rewards for the account, If the account is in the
-    /// staking pool that doesnt restake its rewards it will return somethind
+    /// Returns the rewards for the account, If the account is in the
+    /// staking pool that doesnt restake its rewards it will return some amount
     /// If is in the other pool it will return 0
     pub fn get_account_not_staked_rewards(&self, account_id: AccountId) -> U128{
         self.get_account(account_id).rewards_for_withdraw
