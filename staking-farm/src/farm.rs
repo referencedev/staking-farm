@@ -301,11 +301,11 @@ impl StakingContract {
             assert!(amount > 0, "ERR_ZERO_AMOUNT");
             self.rewards_staked_staking_pool.save_account(claim_account_id, account.as_ref());
         } else {
-            let mut account = self.rewards_staked_staking_pool.get_account_impl(claim_account_id);
+            let mut account = self.rewards_not_staked_staking_pool.get_account_impl(claim_account_id);
             self.internal_distribute_all_rewards(account.as_mut(), false);
             amount = account.remove_farm_amount(token_id);
             assert!(amount > 0, "ERR_ZERO_AMOUNT");
-            self.rewards_staked_staking_pool.save_account(claim_account_id, account.as_ref());
+            self.rewards_not_staked_staking_pool.save_account(claim_account_id, account.as_ref());
         }
         env::log_str(&format!(
             "{} receives {} of {} from {}",
