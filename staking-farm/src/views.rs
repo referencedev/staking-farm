@@ -1,5 +1,5 @@
 use near_sdk::json_types::{U128, U64};
-use near_sdk::{env, AccountId};
+use near_sdk::{AccountId};
 
 use crate::internal::ZERO_ADDRESS;
 use crate::Farm;

@@ -293,7 +293,7 @@ impl StakingContract {
         send_account_id: &AccountId,
     ) -> Promise {
         let account_staking_rewards = self.does_account_stake_his_rewards(claim_account_id);
-        let mut amount: Balance = 0;
+        let amount: Balance;
         if account_staking_rewards {
             let mut account = self.rewards_staked_staking_pool.get_account_impl(claim_account_id);
             self.internal_distribute_all_rewards(account.as_mut(), true);
