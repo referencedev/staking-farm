@@ -18,19 +18,19 @@ pub fn charlie() -> AccountId {
     "charlie".parse().unwrap()
 }
 
-pub fn A() -> AccountId {
+pub fn a() -> AccountId {
     "aa".parse().unwrap()
 }
-pub fn B() -> AccountId {
+pub fn b() -> AccountId {
     "bb".parse().unwrap()
 }
-pub fn C() -> AccountId {
+pub fn c() -> AccountId {
     "cc".parse().unwrap()
 }
-pub fn D() -> AccountId {
+pub fn d() -> AccountId {
     "dd".parse().unwrap()
 }
-pub fn E() -> AccountId {
+pub fn e() -> AccountId {
     "ee".parse().unwrap()
 }
 
