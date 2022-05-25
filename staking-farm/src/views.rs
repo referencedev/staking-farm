@@ -1,5 +1,5 @@
 use near_sdk::json_types::{U128, U64};
-use near_sdk::{env, AccountId};
+use near_sdk::{AccountId};
 
 use crate::internal::ZERO_ADDRESS;
 use crate::Farm;
@@ -43,6 +43,10 @@ pub struct HumanReadableAccount {
     pub staked_balance: U128,
     /// Whether the unstaked balance is available for withdrawal now.
     pub can_withdraw: bool,
+    /// Rewards showing information for those accounts
+    /// that have their tokens delegated to a pool which
+    /// doesnt restake its rewards
+    pub rewards_for_withdraw: U128,
 }
 
 /// Represents pool summary with all farms and rates applied.
@@ -76,7 +80,7 @@ impl StakingContract {
     pub fn get_pool_summary(&self) -> PoolSummary {
         PoolSummary {
             owner: StakingContract::internal_get_owner_id(),
-            total_staked_balance: self.total_staked_balance.into(),
+            total_staked_balance: (self.rewards_staked_staking_pool.total_staked_balance + self.rewards_not_staked_staking_pool.total_staked_balance).into(),
             reward_fee_fraction: self.reward_fee_fraction.current().clone(),
             next_reward_fee_fraction: self.reward_fee_fraction.next().clone(),
             burn_fee_fraction: self.burn_fee_fraction.clone(),
@@ -138,16 +142,25 @@ impl StakingContract {
         if account_id == AccountId::new_unchecked(ZERO_ADDRESS.to_string()) {
             return U128(0);
         }
-        let account = self.accounts.get(&account_id).expect("ERR_NO_ACCOUNT");
+        let staking_pool = self.get_staking_pool_or_default(&account_id);
+        
+        let account = staking_pool.get_account_impl(&account_id);
         let mut farm = self.farms.get(farm_id).expect("ERR_NO_FARM");
-        let (_rps, reward) = self.internal_unclaimed_balance(&account, farm_id, &mut farm);
-        let prev_reward = *account.amounts.get(&farm.token_id).unwrap_or(&0);
+        let (_rps, reward) = self.internal_unclaimed_balance(account.as_ref(), farm_id, &mut farm, staking_pool.does_pool_stake_staking_rewards());
+        let prev_reward = account.get_farm_amount(farm.token_id);
         U128(reward + prev_reward)
     }
 
     ///
     /// ACCOUNT
     ///
+    
+    /// Returns the rewards for the account, If the account is in the
+    /// staking pool that doesnt restake its rewards it will return some amount
+    /// If is in the other pool it will return 0
+    pub fn get_account_not_staked_rewards(&self, account_id: AccountId) -> U128{
+        self.get_account(account_id).rewards_for_withdraw
+    }
 
     /// Returns the unstaked balance of the given account.
     pub fn get_account_unstaked_balance(&self, account_id: AccountId) -> U128 {
@@ -174,7 +187,9 @@ impl StakingContract {
 
     /// Returns the total staking balance.
     pub fn get_total_staked_balance(&self) -> U128 {
-        self.total_staked_balance.into()
+        (self.rewards_staked_staking_pool.total_staked_balance 
+            + self.rewards_not_staked_staking_pool.total_staked_balance)
+            .into()
     }
 
     /// Returns the current reward fee as a fraction.
@@ -194,28 +209,40 @@ impl StakingContract {
 
     /// Returns human readable representation of the account for the given account ID.
     pub fn get_account(&self, account_id: AccountId) -> HumanReadableAccount {
-        let account = self.internal_get_account(&account_id);
-        HumanReadableAccount {
-            account_id,
-            unstaked_balance: account.unstaked.into(),
-            staked_balance: self
-                .staked_amount_from_num_shares_rounded_down(account.stake_shares)
-                .into(),
-            can_withdraw: account.unstaked_available_epoch_height <= env::epoch_height(),
-        }
+        let staking_pool = self.get_staking_pool_or_default(&account_id);
+        return staking_pool.get_account_info(&account_id);
     }
 
     /// Returns the number of accounts that have positive balance on this staking pool.
     pub fn get_number_of_accounts(&self) -> u64 {
-        self.accounts.len()
+        self.rewards_staked_staking_pool.accounts.len() + self.rewards_not_staked_staking_pool.accounts.len()
     }
 
     /// Returns the list of accounts
     pub fn get_accounts(&self, from_index: u64, limit: u64) -> Vec<HumanReadableAccount> {
-        let keys = self.accounts.keys_as_vector();
+        let keys = self
+            .rewards_staked_staking_pool
+            .accounts
+            .keys_as_vector();
+        let upper_bound = std::cmp::min(from_index + limit, keys.len());
 
-        (from_index..std::cmp::min(from_index + limit, keys.len()))
+        let mut result = (from_index..upper_bound)
             .map(|index| self.get_account(keys.get(index).unwrap()))
-            .collect()
+            .collect::<Vec<HumanReadableAccount>>();
+
+        if upper_bound - (result.len() as u64) > 0 {
+            let other_keys = self
+                .rewards_not_staked_staking_pool
+                .accounts
+                .keys_as_vector();
+                
+            let other_upper_bound = std::cmp::min(upper_bound - (result.len() as u64), other_keys.len());
+            let other_result = (0..other_upper_bound)
+                .map(|index| self.get_account(other_keys.get(index).unwrap()))
+                .collect::<Vec<HumanReadableAccount>>();
+            result.extend(other_result);
+        }
+
+        return result;
     }
 }

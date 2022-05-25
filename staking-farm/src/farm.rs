@@ -1,7 +1,9 @@
 use near_contract_standards::fungible_token::core_impl::ext_fungible_token;
 use near_sdk::{assert_one_yocto, is_promise_success, promise_result_as_success, Timestamp};
 
+use crate::account::AccountImpl;
 use crate::stake::ext_self;
+use crate::staking_pool::{StakingPool};
 use crate::*;
 
 const SESSION_INTERVAL: u64 = 1_000_000_000;
@@ -23,6 +25,7 @@ pub struct RewardDistribution {
     /// DEPRECATED: Unused.
     pub _deprecated_unclaimed: Balance,
     pub reward_per_share: U256,
+    pub reward_per_share_for_accounts_not_staking_rewards: U256,
     pub reward_round: u64,
 }
 
@@ -68,6 +71,7 @@ impl StakingContract {
                 undistributed: amount,
                 _deprecated_unclaimed: 0,
                 reward_per_share: U256::zero(),
+                reward_per_share_for_accounts_not_staking_rewards: U256::zero(),
                 reward_round: 0,
             },
         });
@@ -88,7 +92,6 @@ impl StakingContract {
 
         if let Some(distribution) = self.internal_calculate_distribution(
             &farm,
-            self.total_stake_shares - self.total_burn_shares,
         ) {
             // The farm has started.
             assert!(start_date.is_none(), "ERR_FARM_HAS_STARTED");
@@ -98,6 +101,7 @@ impl StakingContract {
                 undistributed: farm.amount,
                 _deprecated_unclaimed: 0,
                 reward_per_share: distribution.reward_per_share,
+                reward_per_share_for_accounts_not_staking_rewards: distribution.reward_per_share_for_accounts_not_staking_rewards,
                 reward_round: 0,
             };
         } else {
@@ -110,6 +114,7 @@ impl StakingContract {
                 undistributed: farm.amount,
                 _deprecated_unclaimed: 0,
                 reward_per_share: U256::zero(),
+                reward_per_share_for_accounts_not_staking_rewards: U256::zero(),
                 reward_round: 0,
             };
         }
@@ -134,13 +139,14 @@ impl StakingContract {
 
     fn internal_calculate_distribution(
         &self,
-        farm: &Farm,
-        total_staked: Balance,
+        farm: &Farm
     ) -> Option<RewardDistribution> {
         if farm.start_date > env::block_timestamp() {
             // Farm hasn't started.
             return None;
         }
+        let rewards_staked_total_staked_shares = self.rewards_staked_staking_pool.total_stake_shares - self.rewards_staked_staking_pool.total_burn_shares;
+        let total_staked_amount = self.rewards_staked_staking_pool.total_staked_balance + self.rewards_not_staked_staking_pool.total_staked_balance;
         let mut distribution = farm.last_distribution.clone();
         if distribution.undistributed == 0 {
             // Farm has ended.
@@ -163,58 +169,84 @@ impl StakingContract {
             }
         }
         distribution.undistributed -= reward_added;
-        if total_staked == 0 {
+        if rewards_staked_total_staked_shares == 0 {
             distribution.reward_per_share = U256::zero();
         } else {
-            distribution.reward_per_share = farm.last_distribution.reward_per_share
-                + U256::from(reward_added) * U256::from(DENOMINATOR) / U256::from(total_staked);
+            distribution.reward_per_share = 
+                farm.last_distribution.reward_per_share
+                + U256::from(reward_added) 
+                * U256::from(DENOMINATOR) 
+                / U256::from(rewards_staked_total_staked_shares) 
+                * U256::from(self.rewards_staked_staking_pool.total_staked_balance) 
+                / U256::from(total_staked_amount);
         }
+
+        if self.rewards_not_staked_staking_pool.total_staked_balance == 0{
+            distribution.reward_per_share_for_accounts_not_staking_rewards = U256::zero();
+        }else{
+            distribution.reward_per_share_for_accounts_not_staking_rewards = 
+                farm.last_distribution.reward_per_share_for_accounts_not_staking_rewards
+                + U256::from(reward_added) 
+                * U256::from(DENOMINATOR) 
+                / U256::from(self.rewards_not_staked_staking_pool.total_staked_balance) 
+                * U256::from(self.rewards_not_staked_staking_pool.total_staked_balance) 
+                / U256::from(total_staked_amount);
+        }
+
         Some(distribution)
     }
 
     pub(crate) fn internal_unclaimed_balance(
         &self,
-        account: &Account,
+        account: &dyn AccountImpl,
         farm_id: u64,
         farm: &mut Farm,
+        does_account_restake_rewards: bool,
     ) -> (U256, Balance) {
         if let Some(distribution) = self.internal_calculate_distribution(
-            &farm,
-            self.total_stake_shares - self.total_burn_shares,
+            &farm
         ) {
             if distribution.reward_round != farm.last_distribution.reward_round {
                 farm.last_distribution = distribution.clone();
             }
-            if !account.is_burn_account {
-                let user_rps = account
-                    .last_farm_reward_per_share
-                    .get(&farm_id)
-                    .cloned()
-                    .unwrap_or(U256::zero());
-                return (
-                    farm.last_distribution.reward_per_share,
-                    (U256::from(account.stake_shares) * (distribution.reward_per_share - user_rps)
-                        / DENOMINATOR)
-                        .as_u128(),
-                );
+            if !account.is_burn_account() {
+                let user_rps = account.get_last_reward_per_share(farm_id);
+
+                if does_account_restake_rewards{
+                    return (
+                        farm.last_distribution.reward_per_share,
+                        (U256::from(account.get_account_stake_shares()) * (distribution.reward_per_share - user_rps)
+                            / DENOMINATOR)
+                            .as_u128(),
+                    )
+                }else{
+                    return (
+                        farm.last_distribution.reward_per_share_for_accounts_not_staking_rewards,
+                        (U256::from(account.get_account_stake_shares()) * (distribution.reward_per_share_for_accounts_not_staking_rewards - user_rps)
+                            / DENOMINATOR)
+                            .as_u128(),
+                    )
+                }
             }
         }
+            
         (U256::zero(), 0)
     }
 
     fn internal_distribute_reward(
         &mut self,
-        account: &mut Account,
+        account: &mut dyn AccountImpl,
         farm_id: u64,
         mut farm: &mut Farm,
+        does_account_restake_rewards: bool,
     ) {
         let (new_user_rps, claim_amount) =
-            self.internal_unclaimed_balance(&account, farm_id, &mut farm);
-        if !account.is_burn_account {
-            account
-                .last_farm_reward_per_share
-                .insert(farm_id, new_user_rps);
-            *account.amounts.entry(farm.token_id.clone()).or_default() += claim_amount;
+            self.internal_unclaimed_balance(account, farm_id, &mut farm, does_account_restake_rewards);
+        
+        if !account.is_burn_account() {
+            account.update_last_farm_reward_per_share(farm_id, new_user_rps);
+            account.update_farm_amounts(farm.token_id.clone(), claim_amount);
+
             env::log_str(&format!(
                 "Record {} {} reward from farm #{}",
                 claim_amount, farm.token_id, farm_id
@@ -223,12 +255,16 @@ impl StakingContract {
     }
 
     /// Distribute all rewards for the given user.
-    pub(crate) fn internal_distribute_all_rewards(&mut self, mut account: &mut Account) {
+    pub(crate) fn internal_distribute_all_rewards(
+            &mut self, 
+            account: &mut dyn AccountImpl, 
+            does_account_restake_rewards: bool) 
+    {
         let old_active_farms = self.active_farms.clone();
         self.active_farms = vec![];
         for farm_id in old_active_farms.into_iter() {
             if let Some(mut farm) = self.farms.get(farm_id) {
-                self.internal_distribute_reward(&mut account, farm_id, &mut farm);
+                self.internal_distribute_reward(account, farm_id, &mut farm, does_account_restake_rewards);
                 self.farms.replace(farm_id, &farm);
                 // TODO: currently all farms continue to be active.
                 // if farm.is_active() {
@@ -244,9 +280,10 @@ impl StakingContract {
         token_id: &AccountId,
         amount: Balance,
     ) {
-        let mut account = self.internal_get_account(&account_id);
-        *account.amounts.entry(token_id.clone()).or_default() += amount;
-        self.internal_save_account(&account_id, &account);
+        let staking_pool = self.get_staking_pool_or_create(account_id, true);
+        let mut account = staking_pool.get_account_impl(&account_id);
+        account.update_farm_amounts(token_id.clone(), amount);
+        staking_pool.save_account(account_id, account.as_ref());
     }
 
     fn internal_claim(
@@ -255,15 +292,25 @@ impl StakingContract {
         claim_account_id: &AccountId,
         send_account_id: &AccountId,
     ) -> Promise {
-        let mut account = self.internal_get_account(&claim_account_id);
-        self.internal_distribute_all_rewards(&mut account);
-        let amount = account.amounts.remove(&token_id).unwrap_or(0);
-        assert!(amount > 0, "ERR_ZERO_AMOUNT");
+        let account_staking_rewards = self.does_account_stake_his_rewards(claim_account_id);
+        let amount: Balance;
+        if account_staking_rewards {
+            let mut account = self.rewards_staked_staking_pool.get_account_impl(claim_account_id);
+            self.internal_distribute_all_rewards(account.as_mut(), true);
+            amount = account.remove_farm_amount(token_id);
+            assert!(amount > 0, "ERR_ZERO_AMOUNT");
+            self.rewards_staked_staking_pool.save_account(claim_account_id, account.as_ref());
+        } else {
+            let mut account = self.rewards_not_staked_staking_pool.get_account_impl(claim_account_id);
+            self.internal_distribute_all_rewards(account.as_mut(), false);
+            amount = account.remove_farm_amount(token_id);
+            assert!(amount > 0, "ERR_ZERO_AMOUNT");
+            self.rewards_not_staked_staking_pool.save_account(claim_account_id, account.as_ref());
+        }
         env::log_str(&format!(
             "{} receives {} of {} from {}",
             send_account_id, amount, token_id, claim_account_id
         ));
-        self.internal_save_account(&claim_account_id, &account);
         ext_fungible_token::ft_transfer(
             send_account_id.clone(),
             U128(amount),
@@ -352,7 +399,6 @@ impl StakingContract {
         let mut farm = self.internal_get_farm(farm_id);
         let leftover_amount = if let Some(distribution) = self.internal_calculate_distribution(
             &farm,
-            self.total_stake_shares - self.total_burn_shares,
         ) {
             farm.end_date = env::block_timestamp();
             farm.last_distribution = distribution;
