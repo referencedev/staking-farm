@@ -13,7 +13,7 @@ use uint::construct_uint;
 use crate::account::{NumStakeShares, Account};
 use crate::farm::Farm;
 use crate::internal::ZERO_ADDRESS;
-use crate::staking_pool::{InnerStakingPool, InnerStakingPoolWithoutRewardsRestaked, Fraction};
+use crate::staking_pool::{InnerStakingPool, InnerStakingPoolWithoutRewardsRestaked};
 pub use crate::views::{HumanReadableAccount, HumanReadableFarm, PoolSummary};
 
 mod staking_pool;
@@ -326,6 +326,7 @@ mod tests {
     use near_sdk::serde_json::json;
     use near_sdk::test_utils::{get_created_receipts, testing_env_with_promise_results};
 
+    use crate::staking_pool::Fraction;
     use crate::test_utils::tests::*;
     use crate::test_utils::*;
 
