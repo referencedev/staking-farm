@@ -42,7 +42,7 @@ impl StakingContract {
         amount
     }
 
-    pub(crate) fn internal_withdraw(&mut self, account_id: &AccountId, amount: Balance, withdraw_rewards: bool) {
+    pub(crate) fn internal_withdraw(&mut self, account_id: &AccountId, receiver_account_id: AccountId, amount: Balance, withdraw_rewards: bool) {
         assert!(amount > 0, "Withdrawal amount should be positive");
 
         let staking_pool = self.get_staking_pool_or_assert_if_not_present(&account_id);
@@ -56,7 +56,7 @@ impl StakingContract {
             self.account_pool_register.remove(&account_id);
         }        
         total_withdraw += amount;
-        Promise::new(account_id.clone()).transfer(total_withdraw);
+        Promise::new(receiver_account_id.clone()).transfer(total_withdraw);
         self.last_total_balance -= total_withdraw;
     }
 

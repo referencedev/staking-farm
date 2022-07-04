@@ -387,7 +387,7 @@ mod tests {
             emulator.contract.get_account_unstaked_balance(bob()).0,
             deposit_amount
         );
-        emulator.contract.withdraw(deposit_amount.into());
+        emulator.contract.withdraw(deposit_amount.into(), bob());
         assert_eq!(
             emulator.contract.get_account_unstaked_balance(bob()).0,
             0u128
@@ -988,7 +988,7 @@ mod tests {
         println!("Bob rewards {}, rewards in near {}", emulator.contract.get_account_not_staked_rewards(bob()).0,
     yton(emulator.contract.get_account_not_staked_rewards(bob()). 0));
         assert_eq_in_near!(emulator.contract.get_account_not_staked_rewards(bob()).0, rewards * 5 / 10);
-        emulator.contract.withdraw_all();
+        emulator.contract.withdraw_all(bob());
         assert_eq!(emulator.contract.get_account_staked_balance(bob()).0, 0);
         assert_eq!(emulator.contract.get_account_unstaked_balance(bob()).0, 0);
         assert_eq!(emulator.contract.get_account_not_staked_rewards(bob()).0, 0);
@@ -1102,7 +1102,7 @@ mod tests {
 
         emulator.contract.ping();
         let b_withdraw_amount = emulator.contract.get_account_unstaked_balance(b()).0;
-        emulator.contract.withdraw_all();
+        emulator.contract.withdraw_all(bob());
         emulator.amount -= b_withdraw_amount;
 
         emulator.update_context(e(), 0);
@@ -1125,7 +1125,7 @@ mod tests {
         assert_eq_in_near!(emulator.contract.get_account_unstaked_balance(e()).0, e_deposit_amount);
         assert_eq!(emulator.contract.get_account_staked_balance(e()).0, 0);
 
-        emulator.contract.withdraw_all();
+        emulator.contract.withdraw_all(bob());
         emulator.update_context(e(), 0);
         assert_eq!(emulator.contract.get_account_not_staked_rewards(e()).0, 0);
         emulator.update_context(d(), 0);
