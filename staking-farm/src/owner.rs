@@ -239,13 +239,13 @@ pub extern "C" fn update() {
         "{}",
         ERR_MUST_BE_SELF
     );
+    // Load code into register 0 result from the promise.
+    match unsafe { sys::promise_result(0, 0) }{
+        1 => {}
+        // Not ready or failed.
+        _ => env::panic_str("Failed to fetch the new code"),
+    };
     unsafe {
-        // Load code into register 0 result from the promise.
-        match sys::promise_result(0, 0) {
-            1 => {}
-            // Not ready or failed.
-            _ => env::panic_str("Failed to fetch the new code"),
-        };
         // Update current contract with code from register 0.
         let promise_id = sys::promise_batch_create(
             current_id.as_bytes().len() as _,
