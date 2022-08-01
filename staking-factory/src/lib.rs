@@ -19,7 +19,7 @@ const NO_DEPOSIT: Balance = 0;
 
 /// Burn fee that whitelisted contracts take.
 const BURN_FEE_FRACTION: Ratio = Ratio {
-    numerator: 3,
+    numerator: 0,
     denominator: 10,
 };
 
