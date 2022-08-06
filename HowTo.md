@@ -30,9 +30,9 @@ You need:
   2. NEAR CLI: https://github.com/near/near-cli#Installation
   3. Go: https://go.dev/doc/install
   4. Install the nearkey tool:\
-  `$ go install github.com/aurora-is-near/near-api-go/tools/cmd/nearkey`\
+  `$ go install github.com/aurora-is-near/near-api-go/cmd/nearkey`\
   6. Install the nearcall tool (only if you are deploying the whitelist and factory contracts):\
-  `$ go install github.com/aurora-is-near/near-api-go/tools/cmd/nearcall`\
+  `$ go install github.com/aurora-is-near/near-api-go/cmd/nearcall`\
   This tool allows you to call contract methods with arguments that are too long for the near cli.
   7. Rust (only if you are deploying the whitelist and factory contracts):\
   `$ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`\
@@ -159,7 +159,7 @@ The prerequisites for actually deploying a Stake&Farm contract are now in place.
   6. Copy the public_key from the validator_key.json file and make it publicly available:\
   `$ export VALIDATORKEY="ed25519:eSNAthKiUM1kNFifPDCt6U83Abnak4dCRbhUeNGA9j7"`
   7. Finally, call the factory to create the new stake&farm contract:\
-  `$ near --accountId ${OWNERACC} call ${FACTORY} create_staking_pool '{ "staking_pool_id":"'${VALIDATORNAME}'", "code_hash":"'${CONTRACTHASH}'",  "stake_public_key":"'${VALIDATORKEY}'", "reward_fee_fraction": {"numerator": 10, "denominator": 100}}' --amount 30 --gas 300000000000000`\
+  `$ near --accountId ${OWNERACC} call ${FACTORY} create_staking_pool '{ "staking_pool_id":"'${VALIDATORNAME}'", "owner_id":"'${OWNERACC}'", "code_hash":"'${CONTRACTHASH}'",  "stake_public_key":"'${VALIDATORKEY}'", "reward_fee_fraction": {"numerator": 10, "denominator": 100}}' --amount 2423 --gas 300000000000000`\
   This deploys the staking contract owned by OWNERACC and keeping 10/100 (numerator/denominator) of rewards for itself while distributing the remainder to stake-holders.
   8. Make the name of the new contract globally available:\
   `$ export STAKINGCONTRACT=${VALIDATORNAME}.${FACTORY}`
