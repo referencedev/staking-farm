@@ -18,6 +18,7 @@ pub const GET_OWNER_METHOD: &str = "get_owner_account_id";
 
 /// External interface for the fungible token contract.
 #[ext_contract(ext_fungible_token)]
+#[allow(dead_code)]
 pub trait ExtFungibleToken {
     fn ft_transfer(&mut self, receiver_id: AccountId, amount: U128, memo: Option<String>);
 }

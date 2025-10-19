@@ -3,6 +3,7 @@ use crate::*;
 
 /// Interface for the contract itself.
 #[ext_contract(ext_self)]
+#[allow(dead_code)]
 pub trait SelfContract {
     /// A callback to check the result of the staking action.
     /// In case the stake amount is less than the minimum staking threshold, the staking action
