@@ -2,6 +2,7 @@ use crate::owner::{FACTORY_KEY, OWNER_KEY};
 use crate::stake::ext_self;
 use crate::*;
 use near_sdk::log;
+use near_sdk::NearToken;
 
 /// Zero address is implicit address that doesn't have a key for it.
 /// Used for burning tokens.
@@ -23,18 +24,17 @@ impl StakingContract {
         // Stakes with the staking public key. If the public key is invalid the entire function
         // call will be rolled back.
         Promise::new(env::current_account_id())
-            .stake(self.total_staked_balance, self.stake_public_key.clone())
-            .then(ext_self::on_stake_action(
-                env::current_account_id(),
-                NO_DEPOSIT,
-                ON_STAKE_ACTION_GAS,
-            ));
+            .stake(NearToken::from_yoctonear(self.total_staked_balance), self.stake_public_key.clone())
+            .then(ext_self::ext(env::current_account_id())
+                .with_attached_deposit(NearToken::from_yoctonear(NO_DEPOSIT))
+                .with_static_gas(ON_STAKE_ACTION_GAS)
+                .on_stake_action());
     }
 
     pub(crate) fn internal_deposit(&mut self) -> u128 {
         let account_id = env::predecessor_account_id();
         let mut account = self.internal_get_account(&account_id);
-        let amount = env::attached_deposit();
+        let amount = env::attached_deposit().as_yoctonear();
         account.unstaked += amount;
         self.internal_save_account(&account_id, &account);
         self.last_total_balance += amount;
@@ -70,7 +70,7 @@ impl StakingContract {
             account.unstaked
         );
 
-        Promise::new(account_id.clone()).transfer(amount);
+        Promise::new(account_id.clone()).transfer(NearToken::from_yoctonear(amount));
         self.last_total_balance -= amount;
     }
 
@@ -231,7 +231,7 @@ impl StakingContract {
         // since the attached deposit gets included in the `account_balance`, and we have not
         // accounted it yet.
         let total_balance =
-            env::account_locked_balance() + env::account_balance() - env::attached_deposit();
+            env::account_locked_balance().as_yoctonear() + env::account_balance().as_yoctonear() - env::attached_deposit().as_yoctonear();
 
         assert!(
             total_balance >= self.last_total_balance,
@@ -262,7 +262,7 @@ impl StakingContract {
             let num_owner_shares = self.num_shares_from_staked_amount_rounded_down(owners_fee);
 
             self.internal_add_shares(
-                &AccountId::new_unchecked(ZERO_ADDRESS.to_string()),
+                &ZERO_ADDRESS.parse().expect("INTERNAL FAIL"),
                 num_burn_shares,
             );
             self.internal_add_shares(&StakingContract::internal_get_owner_id(), num_owner_shares);
@@ -387,17 +387,17 @@ impl StakingContract {
 
     /// Returns current owner from the storage.
     pub(crate) fn internal_get_owner_id() -> AccountId {
-        AccountId::new_unchecked(
-            String::from_utf8(env::storage_read(OWNER_KEY).expect("MUST HAVE OWNER"))
-                .expect("INTERNAL_FAIL"),
-        )
+        String::from_utf8(env::storage_read(OWNER_KEY).expect("MUST HAVE OWNER"))
+            .expect("INTERNAL_FAIL")
+            .parse()
+            .expect("INTERNAL_FAIL")
     }
 
     /// Returns current contract factory.
     pub(crate) fn internal_get_factory_id() -> AccountId {
-        AccountId::new_unchecked(
-            String::from_utf8(env::storage_read(FACTORY_KEY).expect("MUST HAVE FACTORY"))
-                .expect("INTERNAL_FAIL"),
-        )
+        String::from_utf8(env::storage_read(FACTORY_KEY).expect("MUST HAVE FACTORY"))
+            .expect("INTERNAL_FAIL")
+            .parse()
+            .expect("INTERNAL_FAIL")
     }
 }

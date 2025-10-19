@@ -28,7 +28,7 @@ pub trait SelfContract {
     ) -> Promise;
 }
 
-#[near_bindgen]
+#[near]
 impl StakingContract {
     /// Deposits the attached amount into the inner account of the predecessor.
     #[payable]
@@ -125,12 +125,12 @@ impl StakingContract {
 
     /// Unstakes all the tokens that must be burnt.
     pub fn unstake_burn(&mut self) {
-        self.internal_unstake_all(&AccountId::new_unchecked(ZERO_ADDRESS.to_string()));
+        self.internal_unstake_all(&ZERO_ADDRESS.parse().expect("INTERNAL FAIL"));
     }
 
     /// Burns all the tokens that are unstaked.
     pub fn burn(&mut self) {
-        let account_id = AccountId::new_unchecked(ZERO_ADDRESS.to_string());
+        let account_id: AccountId = ZERO_ADDRESS.parse().expect("INTERNAL FAIL");
         let account = self.internal_get_account(&account_id);
         if account.unstaked > MIN_BURN_AMOUNT {
             // TODO: replace with burn host function when available.
@@ -161,8 +161,8 @@ impl StakingContract {
 
         // If the stake action failed and the current locked amount is positive, then the contract
         // has to unstake.
-        if !stake_action_succeeded && env::account_locked_balance() > 0 {
-            Promise::new(env::current_account_id()).stake(0, self.stake_public_key.clone());
+        if !stake_action_succeeded && env::account_locked_balance() > NearToken::from_yoctonear(0) {
+            Promise::new(env::current_account_id()).stake(NearToken::from_yoctonear(0), self.stake_public_key.clone());
         }
     }
 }

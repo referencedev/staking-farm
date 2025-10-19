@@ -5,8 +5,8 @@ use near_sdk::collections::{UnorderedMap, UnorderedSet, Vector};
 use near_sdk::json_types::U128;
 use near_sdk::serde::{Deserialize, Serialize};
 use near_sdk::{
-    env, ext_contract, near_bindgen, AccountId, Balance, BorshStorageKey, EpochHeight, Gas,
-    Promise, PromiseResult, PublicKey,
+    env, near, ext_contract, near_bindgen, AccountId, BorshStorageKey, EpochHeight, Gas,
+    Promise, PromiseResult, PublicKey, PanicOnDefault, NearToken
 };
 use uint::construct_uint;
 
@@ -25,7 +25,7 @@ mod token_receiver;
 mod views;
 
 /// The amount of gas given to complete internal `on_stake_action` call.
-const ON_STAKE_ACTION_GAS: Gas = Gas(20_000_000_000_000);
+const ON_STAKE_ACTION_GAS: Gas = Gas::from_tgas(20);
 
 /// The amount of yocto NEAR the contract dedicates to guarantee that the "share" price never
 /// decreases. It's used during rounding errors for share -> amount conversions.
@@ -45,11 +45,15 @@ const NUM_EPOCHS_TO_UNLOCK: EpochHeight = 4;
 
 construct_uint! {
     /// 256-bit unsigned integer.
-    #[derive(BorshSerialize, BorshDeserialize)]
+    #[near(serializers=[borsh])]
     pub struct U256(4);
 }
 
-#[derive(BorshStorageKey, BorshSerialize)]
+/// Raw type for balance in yocto NEAR.
+pub type Balance = u128;
+
+#[derive(BorshStorageKey)]
+#[near]
 pub enum StorageKeys {
     Accounts,
     Farms,
@@ -58,7 +62,7 @@ pub enum StorageKeys {
 }
 
 /// Tracking balance for burning.
-#[derive(BorshDeserialize, BorshSerialize)]
+#[near(serializers=[borsh])]
 pub struct BurnInfo {
     /// The unstaked balance that can be burnt.
     pub unstaked: Balance,
@@ -69,7 +73,7 @@ pub struct BurnInfo {
 }
 
 /// Updatable reward fee only after NUM_EPOCHS_TO_UNLOCK.
-#[derive(BorshDeserialize, BorshSerialize)]
+#[near(serializers=[borsh])]
 pub struct UpdatableRewardFee {
     reward_fee_fraction: Ratio,
     next_reward_fee_fraction: Ratio,
@@ -106,8 +110,8 @@ impl UpdatableRewardFee {
     }
 }
 
-#[near_bindgen]
-#[derive(BorshDeserialize, BorshSerialize)]
+#[near(contract_state)]
+#[derive(PanicOnDefault)]
 pub struct StakingContract {
     /// The public key which is used for staking action. It's the public key of the validator node
     /// that validates on behalf of the pool.
@@ -150,14 +154,8 @@ pub struct StakingContract {
     pub authorized_farm_tokens: UnorderedSet<AccountId>,
 }
 
-impl Default for StakingContract {
-    fn default() -> Self {
-        panic!("Staking contract should be initialized before usage")
-    }
-}
-
-#[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize, Clone, PartialEq, Debug)]
-#[serde(crate = "near_sdk::serde")]
+#[derive(Clone, PartialEq, Debug)]
+#[near(serializers=[borsh, json])]
 pub struct Ratio {
     pub numerator: u32,
     pub denominator: u32,
@@ -203,11 +201,11 @@ impl StakingContract {
             env::is_valid_account_id(owner_id.as_bytes()),
             "The owner account ID is invalid"
         );
-        let account_balance = env::account_balance();
+        let account_balance = env::account_balance().as_yoctonear();
         let total_staked_balance = account_balance - STAKE_SHARE_PRICE_GUARANTEE_FUND;
         assert_eq!(
             env::account_locked_balance(),
-            0,
+            NearToken::from_yoctonear(0),
             "The staking pool shouldn't be staking at the initialization"
         );
         let mut this = Self {

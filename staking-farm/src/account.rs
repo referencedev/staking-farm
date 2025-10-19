@@ -1,15 +1,15 @@
 use std::collections::HashMap;
 
-use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
-use near_sdk::{AccountId, Balance, EpochHeight};
+use near_sdk::{near, AccountId, EpochHeight};
 
-use crate::U256;
+use crate::{Balance, U256};
 
 /// A type to distinguish between a balance and "stake" shares for better readability.
 pub type NumStakeShares = Balance;
 
 /// Inner account data of a delegate.
-#[derive(BorshDeserialize, BorshSerialize, Debug, PartialEq)]
+#[near(serializers=[borsh])]
+#[derive(Debug, PartialEq)]
 pub struct Account {
     /// The unstaked balance. It represents the amount the account has on this contract that
     /// can either be staked or withdrawn.
@@ -28,7 +28,7 @@ pub struct Account {
     pub amounts: HashMap<AccountId, Balance>,
     /// Is this a burn account.
     /// Note: It's not persisted in the state, but initialized during internal_get_account.
-    #[borsh_skip]
+    #[borsh(skip)]
     pub is_burn_account: bool,
 }
 
