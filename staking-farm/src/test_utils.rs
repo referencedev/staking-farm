@@ -1,5 +1,6 @@
 use near_sdk::AccountId;
-use near_sdk::Balance;
+
+use crate::Balance;
 
 pub fn staking() -> AccountId {
     "staking".parse().unwrap()
@@ -50,7 +51,7 @@ macro_rules! assert_eq_in_near {
 #[cfg(test)]
 pub mod tests {
     use near_sdk::test_utils::VMContextBuilder;
-    use near_sdk::{testing_env, VMContext};
+    use near_sdk::{testing_env, VMContext, NearToken};
 
     use crate::*;
 
@@ -85,7 +86,7 @@ pub mod tests {
         ) -> Self {
             let context = VMContextBuilder::new()
                 .current_account_id(owner.clone())
-                .account_balance(ntoy(30))
+                .account_balance(NearToken::from_yoctonear(ntoy(30)))
                 .build();
             testing_env!(context.clone());
             let contract = StakingContract::new(
@@ -130,11 +131,11 @@ pub mod tests {
                 .current_account_id(staking())
                 .predecessor_account_id(predecessor_account_id.clone())
                 .signer_account_id(predecessor_account_id)
-                .attached_deposit(deposit)
-                .account_balance(self.amount)
-                .account_locked_balance(self.locked_amount)
+                .attached_deposit(NearToken::from_yoctonear(deposit))
+                .account_balance(NearToken::from_yoctonear(self.amount))
+                .account_locked_balance(NearToken::from_yoctonear(self.locked_amount))
                 .epoch_height(self.epoch_height)
-                .block_index(self.block_index)
+                .block_height(self.block_index)
                 .block_timestamp(self.block_timestamp)
                 .build();
             testing_env!(self.context.clone());
