@@ -51,7 +51,7 @@ impl StakingContract {
     pub(crate) fn internal_withdraw(&mut self, account_id: &AccountId, amount: Balance) {
         assert!(amount > 0, "Withdrawal amount should be positive");
 
-        let mut account = self.internal_get_account(&account_id);
+        let mut account = self.internal_get_account(account_id);
         assert!(
             account.unstaked >= amount,
             "Not enough unstaked balance to withdraw"
@@ -61,7 +61,7 @@ impl StakingContract {
             "The unstaked balance is not yet available due to unstaking delay"
         );
         account.unstaked -= amount;
-        self.internal_save_account(&account_id, &account);
+        self.internal_save_account(account_id, &account);
 
         log!(
             "@{} withdrawing {}. New unstaked balance is {}",
@@ -134,7 +134,7 @@ impl StakingContract {
     pub(crate) fn inner_unstake(&mut self, account_id: &AccountId, amount: u128) {
         assert!(amount > 0, "Unstaking amount should be positive");
 
-        let mut account = self.internal_get_account(&account_id);
+        let mut account = self.internal_get_account(account_id);
 
         // Distribute rewards from all the farms for the given user.
         self.internal_distribute_all_rewards(&mut account);
@@ -166,7 +166,7 @@ impl StakingContract {
         account.stake_shares -= num_shares;
         account.unstaked += receive_amount;
         account.unstaked_available_epoch_height = env::epoch_height() + NUM_EPOCHS_TO_UNLOCK;
-        self.internal_save_account(&account_id, &account);
+        self.internal_save_account(account_id, &account);
 
         // The amount tokens that will be unstaked from the total to guarantee the "stake" share
         // price never decreases. The difference between `receive_amount` and `unstake_amount` is
@@ -199,7 +199,7 @@ impl StakingContract {
         // Unstake action always restakes
         self.internal_ping();
 
-        let account = self.internal_get_account(&account_id);
+        let account = self.internal_get_account(account_id);
         let amount = self.staked_amount_from_num_shares_rounded_down(account.stake_shares);
         self.inner_unstake(account_id, amount);
 
@@ -209,9 +209,9 @@ impl StakingContract {
     /// Add given number of staked shares to the given account.
     fn internal_add_shares(&mut self, account_id: &AccountId, num_shares: NumStakeShares) {
         if num_shares > 0 {
-            let mut account = self.internal_get_account(&account_id);
+            let mut account = self.internal_get_account(account_id);
             account.stake_shares += num_shares;
-            self.internal_save_account(&account_id, &account);
+            self.internal_save_account(account_id, &account);
             // Increasing the total amount of "stake" shares.
             self.total_stake_shares += num_shares;
         }
@@ -373,8 +373,8 @@ impl StakingContract {
     /// Inner method to save the given account for a given account ID.
     /// If the account balances are 0, the account is deleted instead to release storage.
     pub(crate) fn internal_save_account(&mut self, account_id: &AccountId, account: &Account) {
-        if account.unstaked > 0 || account.stake_shares > 0 || account.amounts.len() > 0 {
-            self.accounts.insert(account_id, &account);
+        if account.unstaked > 0 || account.stake_shares > 0 || !account.amounts.is_empty() {
+            self.accounts.insert(account_id, account);
         } else {
             self.accounts.remove(account_id);
         }

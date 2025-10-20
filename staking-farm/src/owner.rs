@@ -60,7 +60,7 @@ impl StakingContract {
         self.assert_owner();
         // When updating the staking key, the contract has to restake.
         let _need_to_restake = self.internal_ping();
-        self.stake_public_key = stake_public_key.into();
+        self.stake_public_key = stake_public_key;
         self.internal_restake();
     }
 
@@ -133,13 +133,13 @@ impl StakingContract {
     /// Add authorized token.
     pub fn add_authorized_farm_token(&mut self, token_id: &AccountId) {
         self.assert_owner_or_authorized_user();
-        self.authorized_farm_tokens.insert(&token_id);
+        self.authorized_farm_tokens.insert(token_id);
     }
 
     /// Remove authorized token.
     pub fn remove_authorized_farm_token(&mut self, token_id: &AccountId) {
         self.assert_owner_or_authorized_user();
-        self.authorized_farm_tokens.remove(&token_id);
+        self.authorized_farm_tokens.remove(token_id);
     }
 
     /// Asserts that the method was called by the owner.

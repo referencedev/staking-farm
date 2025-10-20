@@ -9,7 +9,7 @@ pub type NumStakeShares = Balance;
 
 /// Inner account data of a delegate.
 #[near(serializers=[borsh])]
-#[derive(Debug, PartialEq)]
+#[derive(Default, Debug, PartialEq)]
 pub struct Account {
     /// The unstaked balance. It represents the amount the account has on this contract that
     /// can either be staked or withdrawn.
@@ -32,15 +32,3 @@ pub struct Account {
     pub is_burn_account: bool,
 }
 
-impl Default for Account {
-    fn default() -> Self {
-        Self {
-            unstaked: 0,
-            stake_shares: 0,
-            unstaked_available_epoch_height: 0,
-            last_farm_reward_per_share: HashMap::new(),
-            amounts: HashMap::new(),
-            is_burn_account: false,
-        }
-    }
-}

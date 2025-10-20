@@ -1,4 +1,3 @@
-use std::convert::TryInto;
 
 use near_sdk::collections::{UnorderedMap, UnorderedSet, Vector};
 use near_sdk::json_types::U128;
@@ -208,7 +207,7 @@ impl StakingContract {
             "The staking pool shouldn't be staking at the initialization"
         );
         let mut this = Self {
-            stake_public_key: stake_public_key.into(),
+            stake_public_key,
             last_epoch_height: env::epoch_height(),
             last_total_balance: account_balance,
             total_staked_balance,

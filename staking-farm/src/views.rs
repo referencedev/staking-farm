@@ -86,7 +86,6 @@ impl StakingContract {
     ///
     /// OWNER
     ///
-
     /// Returns current contract version.
     pub fn get_version(&self) -> String {
         Self::internal_get_version()
@@ -115,7 +114,6 @@ impl StakingContract {
     ///
     /// FARMS
     ///
-
     pub fn get_active_farms(&self) -> Vec<HumanReadableFarm> {
         self.active_farms
             .iter()
@@ -147,7 +145,6 @@ impl StakingContract {
     ///
     /// ACCOUNT
     ///
-
     /// Returns the unstaked balance of the given account.
     pub fn get_account_unstaked_balance(&self, account_id: AccountId) -> U128 {
         self.get_account(account_id).unstaked_balance
@@ -183,7 +180,7 @@ impl StakingContract {
 
     /// Returns the staking public key
     pub fn get_staking_key(&self) -> PublicKey {
-        self.stake_public_key.clone().try_into().unwrap()
+        self.stake_public_key.clone()
     }
 
     /// Returns true if the staking is paused

@@ -155,10 +155,7 @@ impl StakingContract {
             1,
             "Contract expected a result on the callback"
         );
-        let stake_action_succeeded = match env::promise_result(0) {
-            PromiseResult::Successful(_) => true,
-            _ => false,
-        };
+        let stake_action_succeeded = matches!(env::promise_result(0), PromiseResult::Successful(_));
 
         // If the stake action failed and the current locked amount is positive, then the contract
         // has to unstake.
