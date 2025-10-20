@@ -1,0 +1,140 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Build staking-farm",
+			"type": "shell",
+			"command": "cargo build -p staking-farm --target wasm32-unknown-unknown",
+			"problemMatcher": [
+				"$rustc"
+			],
+			"group": "build"
+		},
+		{
+			"label": "Build staking-farm",
+			"type": "shell",
+			"command": "cargo build -p staking-farm --target wasm32-unknown-unknown",
+			"problemMatcher": [
+				"$rustc"
+			],
+			"group": "build"
+		},
+		{
+			"label": "Test staking-farm",
+			"type": "shell",
+			"command": "cargo test -p staking-farm",
+			"problemMatcher": [
+				"$rustc"
+			],
+			"group": "test"
+		},
+		{
+			"label": "Test staking-farm (unit)",
+			"type": "shell",
+			"command": "cargo test -p staking-farm --lib",
+			"problemMatcher": [
+				"$rustc"
+			],
+			"group": "test"
+		},
+		{
+			"label": "Build after storage refactor",
+			"type": "shell",
+			"command": "cargo build -p staking-farm --target wasm32-unknown-unknown",
+			"problemMatcher": [
+				"$rustc"
+			],
+			"group": "build"
+		},
+		{
+			"label": "Build after adding account_storage_usage",
+			"type": "shell",
+			"command": "cargo build -p staking-farm --target wasm32-unknown-unknown",
+			"problemMatcher": [
+				"$rustc"
+			],
+			"group": "build"
+		},
+		{
+			"label": "Rebuild after struct field added",
+			"type": "shell",
+			"command": "cargo build -p staking-farm --target wasm32-unknown-unknown",
+			"problemMatcher": [
+				"$rustc"
+			],
+			"group": "build"
+		},
+		{
+			"label": "Build after removing account_storage_usage",
+			"type": "shell",
+			"command": "cargo build -p staking-farm --target wasm32-unknown-unknown",
+			"problemMatcher": [
+				"$rustc"
+			],
+			"group": "build"
+		},
+		{
+			"label": "Run all tests",
+			"type": "shell",
+			"command": "cargo test -p staking-farm",
+			"problemMatcher": [
+				"$rustc"
+			],
+			"group": "test"
+		},
+		{
+			"label": "Run staking-farm tests",
+			"type": "shell",
+			"command": "cargo test -p staking-farm --lib",
+			"problemMatcher": [
+				"$rustc"
+			],
+			"group": "test"
+		},
+		{
+			"label": "Run all tests",
+			"type": "shell",
+			"command": "cargo test -p staking-farm",
+			"problemMatcher": [
+				"$rustc"
+			],
+			"group": "test"
+		},
+		{
+			"label": "Run full staking-farm tests",
+			"type": "shell",
+			"command": "cargo test -p staking-farm",
+			"problemMatcher": [
+				"$rustc"
+			],
+			"group": "test"
+		},
+		{
+			"label": "Build and test after metadata changes",
+			"type": "shell",
+			"command": "cargo test -p staking-farm",
+			"problemMatcher": [
+				"$rustc"
+			],
+			"group": "test"
+		},
+		{
+			"label": "Run tests for metadata",
+			"type": "shell",
+			"command": "cargo test -p staking-farm --lib test_ft_metadata_defaults_and_update",
+			"problemMatcher": [
+				"$rustc"
+			],
+			"group": "test"
+		},
+		{
+			"label": "Run metadata test again",
+			"type": "shell",
+			"command": "cargo test -p staking-farm --lib test_ft_metadata_defaults_and_update",
+			"problemMatcher": [
+				"$rustc"
+			],
+			"group": "test"
+		}
+	]
+}
