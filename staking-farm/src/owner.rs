@@ -1,5 +1,4 @@
 use near_sdk::sys;
-use near_sdk::sys::{promise_batch_action_function_call, promise_batch_then};
 
 use crate::*;
 
@@ -7,11 +6,11 @@ pub const OWNER_KEY: &[u8; 5] = b"OWNER";
 pub const FACTORY_KEY: &[u8; 7] = b"FACTORY";
 pub const VERSION_KEY: &[u8; 7] = b"VERSION";
 const GET_CODE_METHOD_NAME: &[u8; 8] = b"get_code";
-const GET_CODE_GAS: Gas = Gas(50_000_000_000_000);
+const GET_CODE_GAS: Gas = Gas::from_tgas(50);
 const SELF_UPGRADE_METHOD_NAME: &[u8; 6] = b"update";
 const SELF_MIGRATE_METHOD_NAME: &[u8; 7] = b"migrate";
-const UPGRADE_GAS_LEFTOVER: Gas = Gas(5_000_000_000_000);
-const UPDATE_GAS_LEFTOVER: Gas = Gas(5_000_000_000_000);
+const UPGRADE_GAS_LEFTOVER: Gas = Gas::from_tgas(5);
+const UPDATE_GAS_LEFTOVER: Gas = Gas::from_tgas(5);
 const NO_DEPOSIT: Balance = 0;
 
 const ERR_MUST_BE_OWNER: &str = "Can only be called by the owner";
@@ -21,14 +20,14 @@ const ERR_MUST_BE_FACTORY: &str = "Can only be called by staking pool factory";
 ///*******************/
 ///* Owner's methods */
 ///*******************/
-#[near_bindgen]
+#[near]
 impl StakingContract {
     /// Storing owner in a separate storage to avoid STATE corruption issues.
     /// Returns previous owner if it existed.
     pub(crate) fn internal_set_owner(owner_id: &AccountId) -> Option<AccountId> {
         env::storage_write(OWNER_KEY, owner_id.as_bytes());
         env::storage_get_evicted()
-            .map(|bytes| AccountId::new_unchecked(String::from_utf8(bytes).expect("INTERNAL FAIL")))
+            .map(|bytes| String::from_utf8(bytes).expect("INTERNAL FAIL").parse().expect("INTERNAL FAIL"))
     }
 
     /// Store the factory in the storage independent of the STATE.
@@ -61,7 +60,7 @@ impl StakingContract {
         self.assert_owner();
         // When updating the staking key, the contract has to restake.
         let _need_to_restake = self.internal_ping();
-        self.stake_public_key = stake_public_key.into();
+        self.stake_public_key = stake_public_key;
         self.internal_restake();
     }
 
@@ -105,7 +104,7 @@ impl StakingContract {
 
         self.internal_ping();
         self.paused = true;
-        Promise::new(env::current_account_id()).stake(0, self.stake_public_key.clone());
+        Promise::new(env::current_account_id()).stake(NearToken::from_yoctonear(0), self.stake_public_key.clone());
     }
 
     /// Owner's method.
@@ -134,13 +133,13 @@ impl StakingContract {
     /// Add authorized token.
     pub fn add_authorized_farm_token(&mut self, token_id: &AccountId) {
         self.assert_owner_or_authorized_user();
-        self.authorized_farm_tokens.insert(&token_id);
+        self.authorized_farm_tokens.insert(token_id);
     }
 
     /// Remove authorized token.
     pub fn remove_authorized_farm_token(&mut self, token_id: &AccountId) {
         self.assert_owner_or_authorized_user();
-        self.authorized_farm_tokens.remove(&token_id);
+        self.authorized_farm_tokens.remove(token_id);
     }
 
     /// Asserts that the method was called by the owner.
@@ -179,7 +178,7 @@ impl StakingContract {
 /// Calls `factory_id.get_code(hash)` first to get the code.
 /// Callback to `self.update(code)` to upgrade code.
 /// Callback after that to `self.migrate()` to migrate the state using new code.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn upgrade() {
     env::setup_panic_hook();
     let current_id = env::current_account_id();
@@ -200,36 +199,36 @@ pub extern "C" fn upgrade() {
             factory_id.as_bytes().as_ptr() as _,
         );
         // Call method to get the code, passing register 0 as an argument.
-        promise_batch_action_function_call(
+        sys::promise_batch_action_function_call(
             promise_id,
             GET_CODE_METHOD_NAME.len() as _,
             GET_CODE_METHOD_NAME.as_ptr() as _,
             u64::MAX as _,
             0,
             &NO_DEPOSIT as *const u128 as _,
-            GET_CODE_GAS.0,
+            GET_CODE_GAS.as_gas(),
         );
         // Add callback to actually redeploy and migrate.
-        let callback_id = promise_batch_then(
+        let callback_id = sys::promise_batch_then(
             promise_id,
             current_id.as_bytes().len() as _,
             current_id.as_bytes().as_ptr() as _,
         );
-        promise_batch_action_function_call(
+        sys::promise_batch_action_function_call(
             callback_id,
             SELF_UPGRADE_METHOD_NAME.len() as _,
             SELF_UPGRADE_METHOD_NAME.as_ptr() as _,
             0,
             0,
             &NO_DEPOSIT as *const u128 as _,
-            (env::prepaid_gas() - env::used_gas() - GET_CODE_GAS - UPGRADE_GAS_LEFTOVER).0,
+            (env::prepaid_gas().saturating_sub(env::used_gas()).saturating_sub(GET_CODE_GAS).saturating_sub(UPGRADE_GAS_LEFTOVER)).as_gas(),
         );
         sys::promise_return(callback_id);
     }
 }
 
 /// Updating current contract with the received code from factory.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn update() {
     env::setup_panic_hook();
     let current_id = env::current_account_id();
@@ -255,14 +254,14 @@ pub extern "C" fn update() {
         sys::promise_batch_action_deploy_contract(promise_id, u64::MAX as _, 0);
         // Call promise to migrate the state.
         // Batched together to fail upgrade if migration fails.
-        promise_batch_action_function_call(
+        sys::promise_batch_action_function_call(
             promise_id,
             SELF_MIGRATE_METHOD_NAME.len() as _,
             SELF_MIGRATE_METHOD_NAME.as_ptr() as _,
             0,
             0,
             &NO_DEPOSIT as *const u128 as _,
-            (env::prepaid_gas() - env::used_gas() - UPDATE_GAS_LEFTOVER).0,
+            (env::prepaid_gas().saturating_sub(env::used_gas()).saturating_sub(UPDATE_GAS_LEFTOVER)).as_gas(),
         );
         sys::promise_return(promise_id);
     }
@@ -271,7 +270,7 @@ pub extern "C" fn update() {
 /// Empty migrate method for future use.
 /// Makes sure that state version is previous.
 /// When updating code, make sure to update what previous version actually is.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn migrate() {
     env::setup_panic_hook();
     assert_eq!(

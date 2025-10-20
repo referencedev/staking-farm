@@ -1,5 +1,4 @@
-use near_contract_standards::fungible_token::core_impl::ext_fungible_token;
-use near_sdk::{assert_one_yocto, is_promise_success, promise_result_as_success, Timestamp};
+use near_sdk::{near, assert_one_yocto, is_promise_success, promise_result_as_success, Timestamp, ext_contract};
 
 use crate::stake::ext_self;
 use crate::*;
@@ -8,16 +7,24 @@ const SESSION_INTERVAL: u64 = 1_000_000_000;
 const DENOMINATOR: u128 = 1_000_000_000_000_000_000_000_000;
 
 /// Amount of gas for fungible token transfers.
-pub const GAS_FOR_FT_TRANSFER: Gas = Gas(10_000_000_000_000);
+pub const GAS_FOR_FT_TRANSFER: Gas = Gas::from_tgas(10);
 /// hotfix_insuffient_gas_for_mft_resolve_transfer, increase from 5T to 20T
-pub const GAS_FOR_RESOLVE_TRANSFER: Gas = Gas(20_000_000_000_000);
+pub const GAS_FOR_RESOLVE_TRANSFER: Gas = Gas::from_tgas(20);
 /// Gas for calling `get_owner` method.
-pub const GAS_FOR_GET_OWNER: Gas = Gas(10_000_000_000_000);
-pub const GAS_LEFTOVERS: Gas = Gas(20_000_000_000_000);
+pub const GAS_FOR_GET_OWNER: Gas = Gas::from_tgas(10);
+pub const GAS_LEFTOVERS: Gas = Gas::from_tgas(20);
 /// Get owner method on external contracts.
 pub const GET_OWNER_METHOD: &str = "get_owner_account_id";
 
-#[derive(BorshSerialize, BorshDeserialize, Clone, Debug)]
+/// External interface for the fungible token contract.
+#[ext_contract(ext_fungible_token)]
+#[allow(dead_code)]
+pub trait ExtFungibleToken {
+    fn ft_transfer(&mut self, receiver_id: AccountId, amount: U128, memo: Option<String>);
+}
+
+#[near(serializers=[borsh])]
+#[derive(Clone, Debug)]
 pub struct RewardDistribution {
     pub undistributed: Balance,
     /// DEPRECATED: Unused.
@@ -26,7 +33,7 @@ pub struct RewardDistribution {
     pub reward_round: u64,
 }
 
-#[derive(BorshSerialize, BorshDeserialize)]
+#[near(serializers=[borsh])]
 pub struct Farm {
     pub name: String,
     pub token_id: AccountId,
@@ -42,6 +49,7 @@ impl Farm {
     }
 }
 
+#[near]
 impl StakingContract {
     pub(crate) fn internal_deposit_farm_tokens(
         &mut self,
@@ -179,7 +187,7 @@ impl StakingContract {
         farm: &mut Farm,
     ) -> (U256, Balance) {
         if let Some(distribution) = self.internal_calculate_distribution(
-            &farm,
+            farm,
             self.total_stake_shares - self.total_burn_shares,
         ) {
             if distribution.reward_round != farm.last_distribution.reward_round {
@@ -206,10 +214,10 @@ impl StakingContract {
         &mut self,
         account: &mut Account,
         farm_id: u64,
-        mut farm: &mut Farm,
+        farm: &mut Farm,
     ) {
         let (new_user_rps, claim_amount) =
-            self.internal_unclaimed_balance(&account, farm_id, &mut farm);
+            self.internal_unclaimed_balance(account, farm_id, farm);
         if !account.is_burn_account {
             account
                 .last_farm_reward_per_share
@@ -223,12 +231,12 @@ impl StakingContract {
     }
 
     /// Distribute all rewards for the given user.
-    pub(crate) fn internal_distribute_all_rewards(&mut self, mut account: &mut Account) {
+    pub(crate) fn internal_distribute_all_rewards(&mut self, account: &mut Account) {
         let old_active_farms = self.active_farms.clone();
         self.active_farms = vec![];
         for farm_id in old_active_farms.into_iter() {
             if let Some(mut farm) = self.farms.get(farm_id) {
-                self.internal_distribute_reward(&mut account, farm_id, &mut farm);
+                self.internal_distribute_reward(account, farm_id, &mut farm);
                 self.farms.replace(farm_id, &farm);
                 // TODO: currently all farms continue to be active.
                 // if farm.is_active() {
@@ -244,9 +252,9 @@ impl StakingContract {
         token_id: &AccountId,
         amount: Balance,
     ) {
-        let mut account = self.internal_get_account(&account_id);
+        let mut account = self.internal_get_account(account_id);
         *account.amounts.entry(token_id.clone()).or_default() += amount;
-        self.internal_save_account(&account_id, &account);
+        self.internal_save_account(account_id, &account);
     }
 
     fn internal_claim(
@@ -255,32 +263,28 @@ impl StakingContract {
         claim_account_id: &AccountId,
         send_account_id: &AccountId,
     ) -> Promise {
-        let mut account = self.internal_get_account(&claim_account_id);
+        let mut account = self.internal_get_account(claim_account_id);
         self.internal_distribute_all_rewards(&mut account);
-        let amount = account.amounts.remove(&token_id).unwrap_or(0);
+        let amount = account.amounts.remove(token_id).unwrap_or(0);
         assert!(amount > 0, "ERR_ZERO_AMOUNT");
         env::log_str(&format!(
             "{} receives {} of {} from {}",
             send_account_id, amount, token_id, claim_account_id
         ));
-        self.internal_save_account(&claim_account_id, &account);
-        ext_fungible_token::ft_transfer(
-            send_account_id.clone(),
-            U128(amount),
-            None,
-            token_id.clone(),
-            1,
-            GAS_FOR_FT_TRANSFER,
-        )
-        .then(ext_self::callback_post_withdraw_reward(
-            token_id.clone(),
-            // Return funds to the account that was deducted from vs caller.
-            claim_account_id.clone(),
-            U128(amount),
-            env::current_account_id(),
-            0,
-            GAS_FOR_RESOLVE_TRANSFER,
-        ))
+        self.internal_save_account(claim_account_id, &account);
+        ext_fungible_token::ext(token_id.clone())
+            .with_attached_deposit(NearToken::from_yoctonear(1))
+            .with_static_gas(GAS_FOR_FT_TRANSFER)
+            .ft_transfer(send_account_id.clone(), U128(amount), None)
+        .then(ext_self::ext(env::current_account_id())
+            .with_attached_deposit(NearToken::from_yoctonear(0))
+            .with_static_gas(GAS_FOR_RESOLVE_TRANSFER)
+            .callback_post_withdraw_reward(
+                token_id.clone(),
+                // Return funds to the account that was deducted from vs caller.
+                claim_account_id.clone(),
+                U128(amount),
+            ))
     }
 }
 
@@ -331,15 +335,15 @@ impl StakingContract {
         let account_id = env::predecessor_account_id();
         if let Some(delegator_id) = delegator_id {
             Promise::new(delegator_id.clone())
-                .function_call(GET_OWNER_METHOD.to_string(), vec![], 0, GAS_FOR_GET_OWNER)
-                .then(ext_self::callback_post_get_owner(
-                    token_id,
-                    delegator_id,
-                    account_id,
-                    env::current_account_id(),
-                    0,
-                    env::prepaid_gas() - env::used_gas() - GAS_FOR_GET_OWNER - GAS_LEFTOVERS,
-                ))
+                .function_call(GET_OWNER_METHOD.to_string(), vec![], NearToken::from_yoctonear(0), GAS_FOR_GET_OWNER)
+                .then(ext_self::ext(env::current_account_id())
+                    .with_attached_deposit(NearToken::from_yoctonear(0))
+                    .with_static_gas(env::prepaid_gas().saturating_sub(env::used_gas()).saturating_sub(GAS_FOR_GET_OWNER).saturating_sub(GAS_LEFTOVERS))
+                    .callback_post_get_owner(
+                        token_id,
+                        delegator_id,
+                        account_id,
+                    ))
         } else {
             self.internal_claim(&token_id, &account_id, &account_id)
         }
@@ -363,13 +367,13 @@ impl StakingContract {
         farm.amount -= leftover_amount;
         farm.last_distribution.undistributed = 0;
         self.farms.replace(farm_id, &farm);
-        ext_fungible_token::ft_transfer(
-            StakingContract::internal_get_owner_id(),
-            U128(leftover_amount),
-            None,
-            farm.token_id.clone(),
-            1,
-            GAS_FOR_FT_TRANSFER,
-        )
+        ext_fungible_token::ext(farm.token_id.clone())
+            .with_attached_deposit(NearToken::from_yoctonear(1))
+            .with_static_gas(GAS_FOR_FT_TRANSFER)
+            .ft_transfer(
+                StakingContract::internal_get_owner_id(),
+                U128(leftover_amount),
+                None,
+            )
     }
 }

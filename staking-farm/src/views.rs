@@ -5,8 +5,8 @@ use crate::internal::ZERO_ADDRESS;
 use crate::Farm;
 use crate::*;
 
-#[derive(Serialize, Deserialize, Clone)]
-#[serde(crate = "near_sdk::serde")]
+#[near(serializers=[json])]
+#[derive(Clone)]
 pub struct HumanReadableFarm {
     pub farm_id: u64,
     pub name: String,
@@ -33,8 +33,8 @@ impl HumanReadableFarm {
 }
 
 /// Represents an account structure readable by humans.
-#[derive(Serialize, Deserialize, Debug)]
-#[serde(crate = "near_sdk::serde")]
+#[near(serializers=[json])]
+#[derive(Debug)]
 pub struct HumanReadableAccount {
     pub account_id: AccountId,
     /// The unstaked balance that can be withdrawn or staked.
@@ -46,8 +46,7 @@ pub struct HumanReadableAccount {
 }
 
 /// Represents pool summary with all farms and rates applied.
-#[derive(Serialize, Deserialize)]
-#[serde(crate = "near_sdk::serde")]
+#[near(serializers=[json])]
 pub struct PoolSummary {
     /// Pool owner.
     pub owner: AccountId,
@@ -65,7 +64,7 @@ pub struct PoolSummary {
     pub farms: Vec<HumanReadableFarm>,
 }
 
-#[near_bindgen]
+#[near]
 impl StakingContract {
     /// Returns summary of this pool.
     /// Can calculate rate of return of this pool with farming by:
@@ -87,7 +86,6 @@ impl StakingContract {
     ///
     /// OWNER
     ///
-
     /// Returns current contract version.
     pub fn get_version(&self) -> String {
         Self::internal_get_version()
@@ -116,7 +114,6 @@ impl StakingContract {
     ///
     /// FARMS
     ///
-
     pub fn get_active_farms(&self) -> Vec<HumanReadableFarm> {
         self.active_farms
             .iter()
@@ -135,7 +132,7 @@ impl StakingContract {
     }
 
     pub fn get_unclaimed_reward(&self, account_id: AccountId, farm_id: u64) -> U128 {
-        if account_id == AccountId::new_unchecked(ZERO_ADDRESS.to_string()) {
+        if account_id == ZERO_ADDRESS.parse::<AccountId>().expect("INTERNAL FAIL") {
             return U128(0);
         }
         let account = self.accounts.get(&account_id).expect("ERR_NO_ACCOUNT");
@@ -148,7 +145,6 @@ impl StakingContract {
     ///
     /// ACCOUNT
     ///
-
     /// Returns the unstaked balance of the given account.
     pub fn get_account_unstaked_balance(&self, account_id: AccountId) -> U128 {
         self.get_account(account_id).unstaked_balance
@@ -184,7 +180,7 @@ impl StakingContract {
 
     /// Returns the staking public key
     pub fn get_staking_key(&self) -> PublicKey {
-        self.stake_public_key.clone().try_into().unwrap()
+        self.stake_public_key.clone()
     }
 
     /// Returns true if the staking is paused

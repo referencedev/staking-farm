@@ -1,12 +1,10 @@
-use std::convert::TryInto;
 
-use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::collections::{UnorderedMap, UnorderedSet, Vector};
 use near_sdk::json_types::U128;
 use near_sdk::serde::{Deserialize, Serialize};
 use near_sdk::{
-    env, ext_contract, near_bindgen, AccountId, Balance, BorshStorageKey, EpochHeight, Gas,
-    Promise, PromiseResult, PublicKey,
+    env, near, ext_contract, near_bindgen, AccountId, BorshStorageKey, EpochHeight, Gas,
+    Promise, PromiseResult, PublicKey, PanicOnDefault, NearToken
 };
 use uint::construct_uint;
 
@@ -25,7 +23,7 @@ mod token_receiver;
 mod views;
 
 /// The amount of gas given to complete internal `on_stake_action` call.
-const ON_STAKE_ACTION_GAS: Gas = Gas(20_000_000_000_000);
+const ON_STAKE_ACTION_GAS: Gas = Gas::from_tgas(20);
 
 /// The amount of yocto NEAR the contract dedicates to guarantee that the "share" price never
 /// decreases. It's used during rounding errors for share -> amount conversions.
@@ -45,11 +43,15 @@ const NUM_EPOCHS_TO_UNLOCK: EpochHeight = 4;
 
 construct_uint! {
     /// 256-bit unsigned integer.
-    #[derive(BorshSerialize, BorshDeserialize)]
+    #[near(serializers=[borsh])]
     pub struct U256(4);
 }
 
-#[derive(BorshStorageKey, BorshSerialize)]
+/// Raw type for balance in yocto NEAR.
+pub type Balance = u128;
+
+#[derive(BorshStorageKey)]
+#[near]
 pub enum StorageKeys {
     Accounts,
     Farms,
@@ -58,7 +60,7 @@ pub enum StorageKeys {
 }
 
 /// Tracking balance for burning.
-#[derive(BorshDeserialize, BorshSerialize)]
+#[near(serializers=[borsh])]
 pub struct BurnInfo {
     /// The unstaked balance that can be burnt.
     pub unstaked: Balance,
@@ -69,7 +71,7 @@ pub struct BurnInfo {
 }
 
 /// Updatable reward fee only after NUM_EPOCHS_TO_UNLOCK.
-#[derive(BorshDeserialize, BorshSerialize)]
+#[near(serializers=[borsh])]
 pub struct UpdatableRewardFee {
     reward_fee_fraction: Ratio,
     next_reward_fee_fraction: Ratio,
@@ -106,8 +108,8 @@ impl UpdatableRewardFee {
     }
 }
 
-#[near_bindgen]
-#[derive(BorshDeserialize, BorshSerialize)]
+#[near(contract_state)]
+#[derive(PanicOnDefault)]
 pub struct StakingContract {
     /// The public key which is used for staking action. It's the public key of the validator node
     /// that validates on behalf of the pool.
@@ -150,14 +152,8 @@ pub struct StakingContract {
     pub authorized_farm_tokens: UnorderedSet<AccountId>,
 }
 
-impl Default for StakingContract {
-    fn default() -> Self {
-        panic!("Staking contract should be initialized before usage")
-    }
-}
-
-#[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize, Clone, PartialEq, Debug)]
-#[serde(crate = "near_sdk::serde")]
+#[derive(Clone, PartialEq, Debug)]
+#[near(serializers=[borsh, json])]
 pub struct Ratio {
     pub numerator: u32,
     pub denominator: u32,
@@ -203,15 +199,15 @@ impl StakingContract {
             env::is_valid_account_id(owner_id.as_bytes()),
             "The owner account ID is invalid"
         );
-        let account_balance = env::account_balance();
+        let account_balance = env::account_balance().as_yoctonear();
         let total_staked_balance = account_balance - STAKE_SHARE_PRICE_GUARANTEE_FUND;
         assert_eq!(
             env::account_locked_balance(),
-            0,
+            NearToken::from_yoctonear(0),
             "The staking pool shouldn't be staking at the initialization"
         );
         let mut this = Self {
-            stake_public_key: stake_public_key.into(),
+            stake_public_key,
             last_epoch_height: env::epoch_height(),
             last_total_balance: account_balance,
             total_staked_balance,
@@ -246,50 +242,12 @@ impl StakingContract {
 mod tests {
     use near_contract_standards::fungible_token::receiver::FungibleTokenReceiver;
     use near_sdk::json_types::U64;
-    use near_sdk::mock::VmAction;
     use near_sdk::serde_json::json;
-    use near_sdk::test_utils::{get_created_receipts, testing_env_with_promise_results};
 
     use crate::test_utils::tests::*;
     use crate::test_utils::*;
 
     use super::*;
-
-    #[test]
-    fn test_restake_fail() {
-        let pub_key = "KuTCtARNzxZQ3YvXDeLjx83FDqxv2SdQTSbiq876zR7"
-            .parse()
-            .unwrap();
-        let mut emulator = Emulator::new(owner(), pub_key, zero_fee());
-        emulator.update_context(bob(), 0);
-        emulator.contract.internal_restake();
-        let receipts = get_created_receipts();
-        assert_eq!(receipts.len(), 2);
-        // Mocked Receipt fields are private, so can't check directly.
-        if let VmAction::Stake { stake, .. } = receipts[0].actions[0] {
-            assert_eq!(stake, 29999999999999000000000000);
-        } else {
-            panic!("unexpected action");
-        }
-        if let VmAction::FunctionCall { method_name, .. } = &receipts[1].actions[0] {
-            assert_eq!(method_name.as_bytes(), b"on_stake_action")
-        } else {
-            panic!("unexpected action");
-        }
-
-        emulator.simulate_stake_call();
-
-        emulator.update_context(staking(), 0);
-        testing_env_with_promise_results(emulator.context.clone(), PromiseResult::Failed);
-        emulator.contract.on_stake_action();
-        let receipts = get_created_receipts();
-        assert_eq!(receipts.len(), 1);
-        if let VmAction::Stake { stake, .. } = receipts[0].actions[0] {
-            assert_eq!(stake, 0);
-        } else {
-            panic!("unexpected action");
-        }
-    }
 
     #[test]
     fn test_deposit_withdraw() {

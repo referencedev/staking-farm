@@ -2,6 +2,7 @@ use crate::owner::{FACTORY_KEY, OWNER_KEY};
 use crate::stake::ext_self;
 use crate::*;
 use near_sdk::log;
+use near_sdk::NearToken;
 
 /// Zero address is implicit address that doesn't have a key for it.
 /// Used for burning tokens.
@@ -23,18 +24,17 @@ impl StakingContract {
         // Stakes with the staking public key. If the public key is invalid the entire function
         // call will be rolled back.
         Promise::new(env::current_account_id())
-            .stake(self.total_staked_balance, self.stake_public_key.clone())
-            .then(ext_self::on_stake_action(
-                env::current_account_id(),
-                NO_DEPOSIT,
-                ON_STAKE_ACTION_GAS,
-            ));
+            .stake(NearToken::from_yoctonear(self.total_staked_balance), self.stake_public_key.clone())
+            .then(ext_self::ext(env::current_account_id())
+                .with_attached_deposit(NearToken::from_yoctonear(NO_DEPOSIT))
+                .with_static_gas(ON_STAKE_ACTION_GAS)
+                .on_stake_action());
     }
 
     pub(crate) fn internal_deposit(&mut self) -> u128 {
         let account_id = env::predecessor_account_id();
         let mut account = self.internal_get_account(&account_id);
-        let amount = env::attached_deposit();
+        let amount = env::attached_deposit().as_yoctonear();
         account.unstaked += amount;
         self.internal_save_account(&account_id, &account);
         self.last_total_balance += amount;
@@ -51,7 +51,7 @@ impl StakingContract {
     pub(crate) fn internal_withdraw(&mut self, account_id: &AccountId, amount: Balance) {
         assert!(amount > 0, "Withdrawal amount should be positive");
 
-        let mut account = self.internal_get_account(&account_id);
+        let mut account = self.internal_get_account(account_id);
         assert!(
             account.unstaked >= amount,
             "Not enough unstaked balance to withdraw"
@@ -61,7 +61,7 @@ impl StakingContract {
             "The unstaked balance is not yet available due to unstaking delay"
         );
         account.unstaked -= amount;
-        self.internal_save_account(&account_id, &account);
+        self.internal_save_account(account_id, &account);
 
         log!(
             "@{} withdrawing {}. New unstaked balance is {}",
@@ -70,7 +70,7 @@ impl StakingContract {
             account.unstaked
         );
 
-        Promise::new(account_id.clone()).transfer(amount);
+        Promise::new(account_id.clone()).transfer(NearToken::from_yoctonear(amount));
         self.last_total_balance -= amount;
     }
 
@@ -134,7 +134,7 @@ impl StakingContract {
     pub(crate) fn inner_unstake(&mut self, account_id: &AccountId, amount: u128) {
         assert!(amount > 0, "Unstaking amount should be positive");
 
-        let mut account = self.internal_get_account(&account_id);
+        let mut account = self.internal_get_account(account_id);
 
         // Distribute rewards from all the farms for the given user.
         self.internal_distribute_all_rewards(&mut account);
@@ -166,7 +166,7 @@ impl StakingContract {
         account.stake_shares -= num_shares;
         account.unstaked += receive_amount;
         account.unstaked_available_epoch_height = env::epoch_height() + NUM_EPOCHS_TO_UNLOCK;
-        self.internal_save_account(&account_id, &account);
+        self.internal_save_account(account_id, &account);
 
         // The amount tokens that will be unstaked from the total to guarantee the "stake" share
         // price never decreases. The difference between `receive_amount` and `unstake_amount` is
@@ -199,7 +199,7 @@ impl StakingContract {
         // Unstake action always restakes
         self.internal_ping();
 
-        let account = self.internal_get_account(&account_id);
+        let account = self.internal_get_account(account_id);
         let amount = self.staked_amount_from_num_shares_rounded_down(account.stake_shares);
         self.inner_unstake(account_id, amount);
 
@@ -209,9 +209,9 @@ impl StakingContract {
     /// Add given number of staked shares to the given account.
     fn internal_add_shares(&mut self, account_id: &AccountId, num_shares: NumStakeShares) {
         if num_shares > 0 {
-            let mut account = self.internal_get_account(&account_id);
+            let mut account = self.internal_get_account(account_id);
             account.stake_shares += num_shares;
-            self.internal_save_account(&account_id, &account);
+            self.internal_save_account(account_id, &account);
             // Increasing the total amount of "stake" shares.
             self.total_stake_shares += num_shares;
         }
@@ -231,7 +231,7 @@ impl StakingContract {
         // since the attached deposit gets included in the `account_balance`, and we have not
         // accounted it yet.
         let total_balance =
-            env::account_locked_balance() + env::account_balance() - env::attached_deposit();
+            env::account_locked_balance().as_yoctonear() + env::account_balance().as_yoctonear() - env::attached_deposit().as_yoctonear();
 
         assert!(
             total_balance >= self.last_total_balance,
@@ -262,7 +262,7 @@ impl StakingContract {
             let num_owner_shares = self.num_shares_from_staked_amount_rounded_down(owners_fee);
 
             self.internal_add_shares(
-                &AccountId::new_unchecked(ZERO_ADDRESS.to_string()),
+                &ZERO_ADDRESS.parse().expect("INTERNAL FAIL"),
                 num_burn_shares,
             );
             self.internal_add_shares(&StakingContract::internal_get_owner_id(), num_owner_shares);
@@ -373,8 +373,8 @@ impl StakingContract {
     /// Inner method to save the given account for a given account ID.
     /// If the account balances are 0, the account is deleted instead to release storage.
     pub(crate) fn internal_save_account(&mut self, account_id: &AccountId, account: &Account) {
-        if account.unstaked > 0 || account.stake_shares > 0 || account.amounts.len() > 0 {
-            self.accounts.insert(account_id, &account);
+        if account.unstaked > 0 || account.stake_shares > 0 || !account.amounts.is_empty() {
+            self.accounts.insert(account_id, account);
         } else {
             self.accounts.remove(account_id);
         }
@@ -387,17 +387,17 @@ impl StakingContract {
 
     /// Returns current owner from the storage.
     pub(crate) fn internal_get_owner_id() -> AccountId {
-        AccountId::new_unchecked(
-            String::from_utf8(env::storage_read(OWNER_KEY).expect("MUST HAVE OWNER"))
-                .expect("INTERNAL_FAIL"),
-        )
+        String::from_utf8(env::storage_read(OWNER_KEY).expect("MUST HAVE OWNER"))
+            .expect("INTERNAL_FAIL")
+            .parse()
+            .expect("INTERNAL_FAIL")
     }
 
     /// Returns current contract factory.
     pub(crate) fn internal_get_factory_id() -> AccountId {
-        AccountId::new_unchecked(
-            String::from_utf8(env::storage_read(FACTORY_KEY).expect("MUST HAVE FACTORY"))
-                .expect("INTERNAL_FAIL"),
-        )
+        String::from_utf8(env::storage_read(FACTORY_KEY).expect("MUST HAVE FACTORY"))
+            .expect("INTERNAL_FAIL")
+            .parse()
+            .expect("INTERNAL_FAIL")
     }
 }
