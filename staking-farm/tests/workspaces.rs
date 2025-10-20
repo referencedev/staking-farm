@@ -8,7 +8,7 @@ const ONE_SEC_IN_NS: u64 = 1_000_000_000;
 const WHITELIST_ACCOUNT_ID: &str = "whitelist";
 
 // WASM file paths
-const STAKING_FARM_WASM: &str = "../res/staking_farm_release.wasm";
+const STAKING_FARM_WASM: &str = "../target/near/staking_farm/staking_farm.wasm";
 const TEST_TOKEN_WASM: &str = "../res/test_token.wasm";
 const WHITELIST_WASM: &str = "../res/whitelist.wasm";
 
@@ -336,7 +336,6 @@ async fn test_stake_operations() -> anyhow::Result<()> {
 
     Ok(())
 }
-
 /// Test clean calculations without rewards and burn.
 #[tokio::test]
 async fn test_farm() -> anyhow::Result<()> {

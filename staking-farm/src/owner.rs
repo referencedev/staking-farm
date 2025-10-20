@@ -5,6 +5,9 @@ use crate::*;
 pub const OWNER_KEY: &[u8; 5] = b"OWNER";
 pub const FACTORY_KEY: &[u8; 7] = b"FACTORY";
 pub const VERSION_KEY: &[u8; 7] = b"VERSION";
+/// FT metadata keys stored outside of the STATE to avoid migrations.
+pub const FT_NAME_KEY: &[u8; 7] = b"FT_NAME";
+pub const FT_SYMBOL_KEY: &[u8; 9] = b"FT_SYMBOL";
 const GET_CODE_METHOD_NAME: &[u8; 8] = b"get_code";
 const GET_CODE_GAS: Gas = Gas::from_tgas(50);
 const SELF_UPGRADE_METHOD_NAME: &[u8; 6] = b"update";
@@ -170,6 +173,37 @@ impl StakingContract {
                 || self.authorized_users.contains(&account_id),
             "ERR_NOT_AUTHORIZED_USER"
         );
+    }
+
+    /// Owner's method. Sets FT name stored outside of state to avoid migrations.
+    pub fn set_ft_name(&mut self, name: String) {
+        self.assert_owner();
+        env::storage_write(FT_NAME_KEY, name.as_bytes());
+    }
+
+    /// Owner's method. Sets FT symbol stored outside of state to avoid migrations.
+    pub fn set_ft_symbol(&mut self, symbol: String) {
+        self.assert_owner();
+        env::storage_write(FT_SYMBOL_KEY, symbol.as_bytes());
+    }
+
+    /// Read FT name from storage or default to full contract account ID.
+    pub(crate) fn internal_get_ft_name() -> String {
+        if let Some(bytes) = env::storage_read(FT_NAME_KEY) {
+            String::from_utf8(bytes).expect("INTERNAL_FAIL")
+        } else {
+            env::current_account_id().to_string()
+        }
+    }
+
+    /// Read FT symbol from storage or default to the prefix of contract account before '.'.
+    pub(crate) fn internal_get_ft_symbol() -> String {
+        if let Some(bytes) = env::storage_read(FT_SYMBOL_KEY) {
+            String::from_utf8(bytes).expect("INTERNAL_FAIL")
+        } else {
+            let acc = env::current_account_id();
+            acc.as_str().split('.').next().unwrap_or(acc.as_str()).to_string().to_uppercase()
+        }
     }
 }
 
