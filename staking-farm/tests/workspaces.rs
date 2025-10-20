@@ -336,7 +336,6 @@ async fn test_stake_operations() -> anyhow::Result<()> {
 
     Ok(())
 }
-
 /// Test clean calculations without rewards and burn.
 #[tokio::test]
 async fn test_farm() -> anyhow::Result<()> {
