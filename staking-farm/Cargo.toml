@@ -1,7 +1,7 @@
 [package]
 name = "staking-farm"
 version = "1.2.0"
-authors = ["referenced <goi65io3903d@protonmail.com>"]
+authors = ["referencedev <goi65io3903d@protonmail.com>"]
 edition = "2024"
 publish = false
 
@@ -20,4 +20,7 @@ quickcheck = "0.9"
 quickcheck_macros = "0.9"
 log = "0.4"
 env_logger = { version = "0.7.1", default-features = false }
-near-sandbox = "0.2.0"
+near-workspaces = "0.10"
+tokio = { version = "1.28", features = ["full"] }
+serde_json = "1.0"
+anyhow = "1.0"
