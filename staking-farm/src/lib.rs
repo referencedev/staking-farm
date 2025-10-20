@@ -6,6 +6,7 @@ use near_sdk::{
     env, near, ext_contract, near_bindgen, AccountId, BorshStorageKey, EpochHeight, Gas,
     Promise, PromiseResult, PublicKey, PanicOnDefault, NearToken
 };
+use near_contract_standards::fungible_token::metadata::{FungibleTokenMetadata, FT_METADATA_SPEC};
 use uint::construct_uint;
 
 use crate::account::{Account, NumStakeShares};
@@ -40,6 +41,10 @@ const MAX_NUM_ACTIVE_FARMS: usize = 3;
 /// when the unstaking promise can arrive at the next epoch, while the inner state is already
 /// updated in the previous epoch. It will not unlock the funds for 4 epochs.
 const NUM_EPOCHS_TO_UNLOCK: EpochHeight = 4;
+
+/// Conservative estimate of bytes required to create a new `Account` entry in storage.
+/// Used to ensure incoming FT transfers of stake shares cover storage for a new receiver.
+const ACCOUNT_STORAGE_BYTES: u64 = 500;
 
 construct_uint! {
     /// 256-bit unsigned integer.
@@ -237,6 +242,155 @@ impl StakingContract {
         }
     }
 }
+
+// ----------------------
+// FT (NEP-141) interface
+// ----------------------
+
+/// Gas for calling external ft_on_transfer on receivers.
+const GAS_FOR_FT_ON_TRANSFER: Gas = Gas::from_tgas(25);
+/// Gas for resolve callback; reuse similar budget as farming resolve.
+const GAS_FOR_FT_RESOLVE: Gas = Gas::from_tgas(20);
+
+/// External interface for ft_on_transfer receivers.
+#[ext_contract(ext_ft_receiver)]
+pub trait ExtFtReceiver {
+    fn ft_on_transfer(&mut self, sender_id: AccountId, amount: U128, msg: String) -> near_sdk::PromiseOrValue<U128>;
+}
+
+#[near_bindgen]
+impl StakingContract {
+    /// Total supply equals all shares minus burned shares.
+    pub fn ft_total_supply(&self) -> U128 {
+        U128(self.total_stake_shares.saturating_sub(self.total_burn_shares))
+    }
+
+    /// Balance of stake shares for a given account.
+    pub fn ft_balance_of(&self, account_id: AccountId) -> U128 {
+        if account_id.as_str() == crate::internal::ZERO_ADDRESS {
+            return U128(0);
+        }
+        let account = self.internal_get_account(&account_id);
+        U128(account.stake_shares)
+    }
+
+    /// Simple transfer of stake shares as FT.
+    #[payable]
+    pub fn ft_transfer(&mut self, receiver_id: AccountId, amount: U128, _memo: Option<String>) {
+        near_sdk::assert_one_yocto();
+        assert!(receiver_id.as_str() != crate::internal::ZERO_ADDRESS, "ERR_TRANSFER_TO_ZERO_ADDRESS");
+        let sender_id = env::predecessor_account_id();
+        let amount: Balance = amount.0;
+        assert!(amount > 0, "ERR_ZERO_AMOUNT");
+        // Ensure enough shares to cover storage if receiver is a new account entry.
+        self.internal_assert_receiver_storage(&receiver_id, amount);
+        self.internal_share_transfer(&sender_id, &receiver_id, amount);
+    }
+
+    /// Transfer stake shares with a callback to the receiver.
+    #[payable]
+    pub fn ft_transfer_call(
+        &mut self,
+        receiver_id: AccountId,
+        amount: U128,
+        _memo: Option<String>,
+        msg: String,
+    ) -> Promise {
+        near_sdk::assert_one_yocto();
+        assert!(receiver_id.as_str() != crate::internal::ZERO_ADDRESS, "ERR_TRANSFER_TO_ZERO_ADDRESS");
+        let sender_id = env::predecessor_account_id();
+        let amount_raw: Balance = amount.0;
+        assert!(amount_raw > 0, "ERR_ZERO_AMOUNT");
+    // Ensure enough shares to cover storage if receiver is a new account entry.
+    self.internal_assert_receiver_storage(&receiver_id, amount_raw);
+
+        // Perform the transfer first.
+        self.internal_share_transfer(&sender_id, &receiver_id, amount_raw);
+
+        // Initiate receiver callback and then resolve.
+        ext_ft_receiver::ext(receiver_id.clone())
+            .with_attached_deposit(NearToken::from_yoctonear(0))
+            .with_static_gas(GAS_FOR_FT_ON_TRANSFER)
+            .ft_on_transfer(sender_id.clone(), amount, msg)
+            .then(crate::stake::ext_self::ext(env::current_account_id())
+                .with_attached_deposit(NearToken::from_yoctonear(0))
+                .with_static_gas(GAS_FOR_FT_RESOLVE)
+                .ft_resolve_transfer(sender_id, receiver_id, amount))
+    }
+
+    /// FT metadata (NEP-148).
+    pub fn ft_metadata(&self) -> FungibleTokenMetadata {
+        FungibleTokenMetadata {
+            spec: FT_METADATA_SPEC.to_string(),
+            name: Self::internal_get_ft_name(),
+            symbol: Self::internal_get_ft_symbol(),
+            icon: None,
+            reference: None,
+            reference_hash: None,
+            decimals: 24,
+        }
+    }
+}
+
+// ------------------------------
+// Storage management (NEP-145)
+// ------------------------------
+
+use near_contract_standards::storage_management::{StorageBalance, StorageBalanceBounds};
+
+#[near_bindgen]
+impl StakingContract {
+    /// Returns the min and max storage balance bounds. Max is None for FTs.
+    pub fn storage_balance_bounds(&self) -> StorageBalanceBounds {
+        // No explicit registration needed: transfered shares cover storage implicitly.
+        StorageBalanceBounds { min: NearToken::from_yoctonear(0), max: None }
+    }
+
+    /// Returns storage balance for account if registered.
+    pub fn storage_balance_of(&self, _account_id: AccountId) -> Option<StorageBalance> {
+        // Stub to satisfy apps; no storage is required in advance.
+        Some(StorageBalance { total: NearToken::from_yoctonear(0), available: NearToken::from_yoctonear(0) })
+    }
+
+    /// Register an account for receiving stake shares. Excess deposit is refunded.
+    #[payable]
+    pub fn storage_deposit(
+        &mut self,
+        _account_id: Option<AccountId>,
+        _registration_only: Option<bool>,
+    ) -> StorageBalance {
+        // Registration not required; refund any attached deposit in full.
+        let deposit = env::attached_deposit();
+        if deposit.as_yoctonear() > 0 {
+            Promise::new(env::predecessor_account_id()).transfer(deposit);
+        }
+        StorageBalance { total: NearToken::from_yoctonear(0), available: NearToken::from_yoctonear(0) }
+    }
+
+    /// Withdraw not supported (always zero available).
+    #[payable]
+    pub fn storage_withdraw(&mut self, _amount: Option<U128>) -> StorageBalance {
+        near_sdk::assert_one_yocto();
+        StorageBalance { total: NearToken::from_yoctonear(0), available: NearToken::from_yoctonear(0) }
+    }
+}
+
+impl StakingContract {
+    /// If receiver doesn't yet have an account entry, ensure the transferred shares are enough to cover storage.
+    fn internal_assert_receiver_storage(&mut self, receiver_id: &AccountId, amount_shares: Balance) {
+        if self.accounts.get(receiver_id).is_some() {
+            return;
+        }
+        // Use a conservative constant for required storage bytes.
+        let bytes = ACCOUNT_STORAGE_BYTES as u128;
+        let near_needed = env::storage_byte_cost().as_yoctonear() * bytes;
+        if self.total_staked_balance > 0 && self.total_stake_shares > 0 {
+            let required_shares = self.num_shares_from_staked_amount_rounded_up(near_needed);
+            assert!(amount_shares >= required_shares, "ERR_INSUFFICIENT_SHARES_FOR_STORAGE");
+        }
+    }
+}
+
 
 #[cfg(test)]
 mod tests {
@@ -738,5 +892,77 @@ mod tests {
             .contract
             .update_reward_fee_fraction(new_fee2.clone());
         assert_eq!(emulator.contract.get_reward_fee_fraction(), new_fee);
+    }
+
+    #[test]
+    fn test_ft_metadata_defaults_and_update() {
+        // By default, name = full account id; symbol = prefix before first dot of account id.
+        let mut emulator = Emulator::new(
+            owner(),
+            "KuTCtARNzxZQ3YvXDeLjx83FDqxv2SdQTSbiq876zR7"
+                .parse()
+                .unwrap(),
+            zero_fee(),
+        );
+
+        // For tests, current_account_id is set to test_utils::staking() when updating context.
+        // Ensure context reflects the contract account before calling view method.
+        emulator.update_context(staking(), 0);
+        let md = emulator.contract.ft_metadata();
+        // Defaults: name = full contract id; symbol = UPPERCASE prefix ("STAKING")
+        assert_eq!(md.name, staking().to_string());
+        assert_eq!(md.symbol, "STAKING".to_string());
+        assert_eq!(md.decimals, 24);
+
+        // Owner updates
+        emulator.update_context(owner(), 0);
+        emulator.contract.set_ft_name("My Pool Share".to_string());
+        emulator.contract.set_ft_symbol("MPS".to_string());
+
+        // Read back updated metadata
+        emulator.update_context(staking(), 0);
+        let md2 = emulator.contract.ft_metadata();
+        assert_eq!(md2.name, "My Pool Share");
+        assert_eq!(md2.symbol, "MPS");
+        assert_eq!(md2.decimals, 24);
+    }
+
+    #[test]
+    fn test_ft_share_transfer() {
+        let mut emulator = Emulator::new(
+            owner(),
+            "KuTCtARNzxZQ3YvXDeLjx83FDqxv2SdQTSbiq876zR7"
+                .parse()
+                .unwrap(),
+            zero_fee(),
+        );
+
+        // Bob stakes some NEAR to get shares.
+        emulator.deposit_and_stake(bob(), ntoy(1_000_000));
+
+        // Register Charlie for receiving shares.
+        emulator.update_context(charlie(), ntoy(1));
+        let _sb = emulator
+            .contract
+            .storage_deposit(Some(charlie()), None);
+
+        // Check Bob's share balance and transfer half to Charlie.
+        let bob_shares = emulator.contract.ft_balance_of(bob()).0;
+        assert!(bob_shares > 0);
+        let half = U128(bob_shares / 2);
+
+        // Need 1 yoctoNEAR to call ft_transfer
+        emulator.update_context(bob(), 1);
+        emulator
+            .contract
+            .ft_transfer(charlie(), half, None);
+
+        // Balances updated: Bob decreased, Charlie increased, total preserved (excluding burn).
+        let bob_after = emulator.contract.ft_balance_of(bob()).0;
+        let charlie_after = emulator.contract.ft_balance_of(charlie()).0;
+
+        assert_eq!(bob_after, bob_shares - half.0);
+        assert_eq!(charlie_after, half.0);
+        assert_eq!(bob_after + charlie_after, bob_shares);
     }
 }

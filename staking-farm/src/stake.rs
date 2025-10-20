@@ -27,6 +27,14 @@ pub trait SelfContract {
         delegator_id: AccountId,
         account_id: AccountId,
     ) -> Promise;
+
+    /// Resolve FT transfer for stake shares and refund unused amount back to sender.
+    fn ft_resolve_transfer(
+        &mut self,
+        sender_id: AccountId,
+        receiver_id: AccountId,
+        amount: U128,
+    ) -> U128;
 }
 
 #[near]
@@ -162,5 +170,65 @@ impl StakingContract {
         if !stake_action_succeeded && env::account_locked_balance() > NearToken::from_yoctonear(0) {
             Promise::new(env::current_account_id()).stake(NearToken::from_yoctonear(0), self.stake_public_key.clone());
         }
+    }
+
+    /// Internal transfer of stake shares between two normal accounts.
+    /// Distributes rewards for both sides before moving shares.
+    pub(crate) fn internal_share_transfer(
+        &mut self,
+        sender_id: &AccountId,
+        receiver_id: &AccountId,
+        amount: Balance,
+    ) {
+        assert!(amount > 0, "ERR_ZERO_AMOUNT");
+        // Update epoch/rewards; no need to restake here.
+        self.internal_ping();
+
+        // Sender must have enough shares.
+        let mut sender = self.internal_get_account(sender_id);
+        let mut receiver = self.internal_get_account(receiver_id);
+
+        // Distribute rewards so future farm calculations use updated stake_shares.
+        self.internal_distribute_all_rewards(&mut sender);
+        self.internal_distribute_all_rewards(&mut receiver);
+
+        assert!(sender.stake_shares >= amount, "ERR_INSUFFICIENT_SHARES");
+        sender.stake_shares -= amount;
+        receiver.stake_shares += amount;
+
+        self.internal_save_account(sender_id, &sender);
+        self.internal_save_account(receiver_id, &receiver);
+    }
+}
+
+#[near]
+impl StakingContract {
+    /// Resolve FT transfer per NEP-141. Expects that receiver's ft_on_transfer returned amount to refund.
+    #[private]
+    pub fn ft_resolve_transfer(
+        &mut self,
+        sender_id: AccountId,
+        receiver_id: AccountId,
+        amount: U128,
+    ) -> U128 {
+        use near_sdk::PromiseResult;
+        let amount: Balance = amount.0;
+        let unused = match env::promise_result(0) {
+            PromiseResult::Successful(value) => {
+                near_sdk::serde_json::from_slice::<U128>(&value).map(|v| v.0).unwrap_or(0)
+            }
+            _ => 0,
+        };
+        if unused > 0 {
+            // Refund unused shares from receiver back to sender; clamp to originally sent amount and receiver balance.
+            let receiver = self.internal_get_account(&receiver_id);
+            let refund = std::cmp::min(unused, std::cmp::min(amount, receiver.stake_shares));
+            if refund > 0 {
+                // Perform transfer back without callbacks.
+                self.internal_share_transfer(&receiver_id, &sender_id, refund);
+                return U128(refund);
+            }
+        }
+        U128(0)
     }
 }
