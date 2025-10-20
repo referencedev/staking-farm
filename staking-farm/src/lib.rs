@@ -250,47 +250,6 @@ mod tests {
 
     use super::*;
 
-    // Note: This test is disabled because VmAction and testing_env_with_promise_results
-    // are no longer available in near-sdk 5.x. To test promise results, use near-workspaces
-    // or near-sandbox for integration testing.
-    /*
-    #[test]
-    fn test_restake_fail() {
-        let pub_key = "KuTCtARNzxZQ3YvXDeLjx83FDqxv2SdQTSbiq876zR7"
-            .parse()
-            .unwrap();
-        let mut emulator = Emulator::new(owner(), pub_key, zero_fee());
-        emulator.update_context(bob(), 0);
-        emulator.contract.internal_restake();
-        let receipts = get_created_receipts();
-        assert_eq!(receipts.len(), 2);
-        // Mocked Receipt fields are private, so can't check directly.
-        if let VmAction::Stake { stake, .. } = receipts[0].actions[0] {
-            assert_eq!(stake, 29999999999999000000000000);
-        } else {
-            panic!("unexpected action");
-        }
-        if let VmAction::FunctionCall { method_name, .. } = &receipts[1].actions[0] {
-            assert_eq!(method_name.as_bytes(), b"on_stake_action")
-        } else {
-            panic!("unexpected action");
-        }
-
-        emulator.simulate_stake_call();
-
-        emulator.update_context(staking(), 0);
-        testing_env_with_promise_results(emulator.context.clone(), PromiseResult::Failed);
-        emulator.contract.on_stake_action();
-        let receipts = get_created_receipts();
-        assert_eq!(receipts.len(), 1);
-        if let VmAction::Stake { stake, .. } = receipts[0].actions[0] {
-            assert_eq!(stake, 0);
-        } else {
-            panic!("unexpected action");
-        }
-    }
-    */
-
     #[test]
     fn test_deposit_withdraw() {
         let mut emulator = Emulator::new(

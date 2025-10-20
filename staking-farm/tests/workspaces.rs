@@ -236,6 +236,107 @@ async fn deploy_farm(ctx: &TestContext) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Test staking and unstaking operations
+/// This replaces the old test_restake_fail which tested promise failures
+/// In workspaces, we test the actual staking flow instead
+#[tokio::test]
+async fn test_stake_operations() -> anyhow::Result<()> {
+    let ctx = init_contracts(
+        NearToken::from_near(10_000),
+        0,
+        0,
+    ).await?;
+
+    // Create a user and deposit
+    let user = ctx.owner
+        .create_subaccount("user1")
+        .initial_balance(NearToken::from_near(100_000))
+        .transact()
+        .await?
+        .into_result()?;
+
+    // Deposit funds
+    user.call(ctx.pool.id(), "deposit")
+        .deposit(NearToken::from_near(1_000))
+        .gas(Gas::from_tgas(200))
+        .transact()
+        .await?
+        .into_result()?;
+
+    // Check unstaked balance
+    let unstaked: serde_json::Value = ctx.pool
+        .view("get_account_unstaked_balance")
+        .args_json(json!({ "account_id": user.id() }))
+        .await?
+        .json()?;
+    let unstaked_balance: u128 = unstaked.as_str().unwrap().parse()?;
+    assert_eq!(unstaked_balance, NearToken::from_near(1_000).as_yoctonear());
+
+    // Stake the funds
+    user.call(ctx.pool.id(), "stake")
+        .args_json(json!({ "amount": NearToken::from_near(500).as_yoctonear().to_string() }))
+        .gas(Gas::from_tgas(200))
+        .transact()
+        .await?
+        .into_result()?;
+
+    // Check staked balance
+    let staked: serde_json::Value = ctx.pool
+        .view("get_account_staked_balance")
+        .args_json(json!({ "account_id": user.id() }))
+        .await?
+        .json()?;
+    let staked_balance: u128 = staked.as_str().unwrap().parse()?;
+    assert_eq!(staked_balance, NearToken::from_near(500).as_yoctonear());
+
+    // Check remaining unstaked balance
+    let unstaked: serde_json::Value = ctx.pool
+        .view("get_account_unstaked_balance")
+        .args_json(json!({ "account_id": user.id() }))
+        .await?
+        .json()?;
+    let unstaked_balance: u128 = unstaked.as_str().unwrap().parse()?;
+    assert_eq!(unstaked_balance, NearToken::from_near(500).as_yoctonear());
+
+    // Unstake some funds
+    user.call(ctx.pool.id(), "unstake")
+        .args_json(json!({ "amount": NearToken::from_near(200).as_yoctonear().to_string() }))
+        .gas(Gas::from_tgas(200))
+        .transact()
+        .await?
+        .into_result()?;
+
+    // Check staked balance after unstake
+    let staked: serde_json::Value = ctx.pool
+        .view("get_account_staked_balance")
+        .args_json(json!({ "account_id": user.id() }))
+        .await?
+        .json()?;
+    let staked_balance: u128 = staked.as_str().unwrap().parse()?;
+    assert_eq!(staked_balance, NearToken::from_near(300).as_yoctonear());
+
+    // Check unstaked balance includes the unstaked amount
+    let unstaked: serde_json::Value = ctx.pool
+        .view("get_account_unstaked_balance")
+        .args_json(json!({ "account_id": user.id() }))
+        .await?
+        .json()?;
+    let unstaked_balance: u128 = unstaked.as_str().unwrap().parse()?;
+    assert_eq!(unstaked_balance, NearToken::from_near(700).as_yoctonear());
+
+    // Verify account info
+    let account: serde_json::Value = ctx.pool
+        .view("get_account")
+        .args_json(json!({ "account_id": user.id() }))
+        .await?
+        .json()?;
+    
+    assert_eq!(account["account_id"], user.id().to_string());
+    assert!(!account["can_withdraw"].as_bool().unwrap(), "Should not be able to withdraw immediately");
+
+    Ok(())
+}
+
 /// Test clean calculations without rewards and burn.
 #[tokio::test]
 async fn test_farm() -> anyhow::Result<()> {
