@@ -271,7 +271,7 @@ impl StakingContract {
             "{} receives {} of {} from {}",
             send_account_id, amount, token_id, claim_account_id
         ));
-    self.internal_save_account(claim_account_id, &account);
+        self.internal_save_account(claim_account_id, &account);
         ext_fungible_token::ext(token_id.clone())
             .with_attached_deposit(NearToken::from_yoctonear(1))
             .with_static_gas(GAS_FOR_FT_TRANSFER)
