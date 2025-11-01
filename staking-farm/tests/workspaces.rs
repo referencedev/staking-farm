@@ -1,5 +1,5 @@
+use near_workspaces::types::{Gas, NearToken};
 use near_workspaces::{Account, AccountId, Contract, Worker};
-use near_workspaces::types::{NearToken, Gas};
 use serde_json::json;
 
 const STAKING_POOL_ACCOUNT_ID: &str = "pool";
@@ -44,12 +44,9 @@ async fn init_contracts(
         .transact()
         .await?
         .into_result()?;
-    
-    let whitelist = whitelist
-        .deploy(&whitelist_wasm)
-        .await?
-        .into_result()?;
-    
+
+    let whitelist = whitelist.deploy(&whitelist_wasm).await?.into_result()?;
+
     whitelist
         .call("new")
         .args_json(json!({ "foundation_account_id": owner.id() }))
@@ -66,12 +63,9 @@ async fn init_contracts(
         .transact()
         .await?
         .into_result()?;
-    
-    let token = token
-        .deploy(&token_wasm)
-        .await?
-        .into_result()?;
-    
+
+    let token = token.deploy(&token_wasm).await?.into_result()?;
+
     token
         .call("new")
         .gas(Gas::from_tgas(300))
@@ -99,11 +93,8 @@ async fn init_contracts(
         .transact()
         .await?
         .into_result()?;
-    
-    let pool = pool
-        .deploy(&pool_wasm)
-        .await?
-        .into_result()?;
+
+    let pool = pool.deploy(&pool_wasm).await?.into_result()?;
 
     let reward_ratio = json!({
         "numerator": reward_ratio,
@@ -114,8 +105,7 @@ async fn init_contracts(
         "denominator": 10
     });
 
-    pool
-        .call("new")
+    pool.call("new")
         .args_json(json!({
             "owner_id": owner.id(),
             "stake_public_key": STAKING_KEY,
@@ -163,7 +153,11 @@ async fn init_contracts(
     })
 }
 
-async fn storage_register(token: &Contract, account_id: &AccountId, _payer: &Account) -> anyhow::Result<()> {
+async fn storage_register(
+    token: &Contract,
+    account_id: &AccountId,
+    _payer: &Account,
+) -> anyhow::Result<()> {
     token
         .call("storage_deposit")
         .args_json(json!({ "account_id": account_id }))
@@ -180,7 +174,7 @@ async fn balance_of(token: &Contract, account_id: &AccountId) -> anyhow::Result<
         .view("ft_balance_of")
         .args_json(json!({ "account_id": account_id }))
         .await?;
-    
+
     let balance: serde_json::Value = result.json()?;
     Ok(balance.as_str().unwrap().parse().unwrap())
 }
@@ -190,7 +184,8 @@ async fn create_user_and_stake(
     name: &str,
     stake_amount: NearToken,
 ) -> anyhow::Result<Account> {
-    let user = ctx.owner
+    let user = ctx
+        .owner
         .create_subaccount(name)
         .initial_balance(NearToken::from_near(100_000))
         .transact()
@@ -213,7 +208,7 @@ async fn deploy_farm(ctx: &TestContext) -> anyhow::Result<()> {
     let current_time = ctx.worker.view_block().await?.timestamp();
     let start_date = current_time + ONE_SEC_IN_NS * 3;
     let end_date = start_date + ONE_SEC_IN_NS * 5;
-    
+
     let msg = json!({
         "name": "Test",
         "start_date": start_date.to_string(),
@@ -241,14 +236,11 @@ async fn deploy_farm(ctx: &TestContext) -> anyhow::Result<()> {
 /// In workspaces, we test the actual staking flow instead
 #[tokio::test]
 async fn test_stake_operations() -> anyhow::Result<()> {
-    let ctx = init_contracts(
-        NearToken::from_near(10_000),
-        0,
-        0,
-    ).await?;
+    let ctx = init_contracts(NearToken::from_near(10_000), 0, 0).await?;
 
     // Create a user and deposit
-    let user = ctx.owner
+    let user = ctx
+        .owner
         .create_subaccount("user1")
         .initial_balance(NearToken::from_near(100_000))
         .transact()
@@ -264,7 +256,8 @@ async fn test_stake_operations() -> anyhow::Result<()> {
         .into_result()?;
 
     // Check unstaked balance
-    let unstaked: serde_json::Value = ctx.pool
+    let unstaked: serde_json::Value = ctx
+        .pool
         .view("get_account_unstaked_balance")
         .args_json(json!({ "account_id": user.id() }))
         .await?
@@ -281,7 +274,8 @@ async fn test_stake_operations() -> anyhow::Result<()> {
         .into_result()?;
 
     // Check staked balance
-    let staked: serde_json::Value = ctx.pool
+    let staked: serde_json::Value = ctx
+        .pool
         .view("get_account_staked_balance")
         .args_json(json!({ "account_id": user.id() }))
         .await?
@@ -290,7 +284,8 @@ async fn test_stake_operations() -> anyhow::Result<()> {
     assert_eq!(staked_balance, NearToken::from_near(500).as_yoctonear());
 
     // Check remaining unstaked balance
-    let unstaked: serde_json::Value = ctx.pool
+    let unstaked: serde_json::Value = ctx
+        .pool
         .view("get_account_unstaked_balance")
         .args_json(json!({ "account_id": user.id() }))
         .await?
@@ -307,7 +302,8 @@ async fn test_stake_operations() -> anyhow::Result<()> {
         .into_result()?;
 
     // Check staked balance after unstake
-    let staked: serde_json::Value = ctx.pool
+    let staked: serde_json::Value = ctx
+        .pool
         .view("get_account_staked_balance")
         .args_json(json!({ "account_id": user.id() }))
         .await?
@@ -316,7 +312,8 @@ async fn test_stake_operations() -> anyhow::Result<()> {
     assert_eq!(staked_balance, NearToken::from_near(300).as_yoctonear());
 
     // Check unstaked balance includes the unstaked amount
-    let unstaked: serde_json::Value = ctx.pool
+    let unstaked: serde_json::Value = ctx
+        .pool
         .view("get_account_unstaked_balance")
         .args_json(json!({ "account_id": user.id() }))
         .await?
@@ -325,14 +322,18 @@ async fn test_stake_operations() -> anyhow::Result<()> {
     assert_eq!(unstaked_balance, NearToken::from_near(700).as_yoctonear());
 
     // Verify account info
-    let account: serde_json::Value = ctx.pool
+    let account: serde_json::Value = ctx
+        .pool
         .view("get_account")
         .args_json(json!({ "account_id": user.id() }))
         .await?
         .json()?;
-    
+
     assert_eq!(account["account_id"], user.id().to_string());
-    assert!(!account["can_withdraw"].as_bool().unwrap(), "Should not be able to withdraw immediately");
+    assert!(
+        !account["can_withdraw"].as_bool().unwrap(),
+        "Should not be able to withdraw immediately"
+    );
 
     Ok(())
 }
@@ -343,7 +344,8 @@ async fn test_farm() -> anyhow::Result<()> {
         NearToken::from_yoctonear(NearToken::from_near(10_000).as_yoctonear() + 1_000_000_000_000),
         0,
         0,
-    ).await?;
+    )
+    .await?;
 
     let user1 = create_user_and_stake(&ctx, "user1", NearToken::from_near(10_000)).await?;
 
@@ -353,16 +355,17 @@ async fn test_farm() -> anyhow::Result<()> {
     // Advance past the start time
     ctx.worker.fast_forward(5).await?;
 
-    let active_farms: Vec<serde_json::Value> = ctx.pool
-        .view("get_active_farms")
-        .await?
-        .json()?;
-    
+    let active_farms: Vec<serde_json::Value> = ctx.pool.view("get_active_farms").await?.json()?;
+
     // Farm should now be active
-    assert!(!active_farms.is_empty(), "Expected at least one active farm");
+    assert!(
+        !active_farms.is_empty(),
+        "Expected at least one active farm"
+    );
 
     // Check unclaimed rewards
-    let unclaimed: serde_json::Value = ctx.pool
+    let unclaimed: serde_json::Value = ctx
+        .pool
         .view("get_unclaimed_reward")
         .args_json(json!({ "account_id": user1.id(), "farm_id": 0 }))
         .await?
@@ -372,16 +375,18 @@ async fn test_farm() -> anyhow::Result<()> {
     // Advance more
     ctx.worker.fast_forward(2).await?;
 
-    let unclaimed: serde_json::Value = ctx.pool
+    let unclaimed: serde_json::Value = ctx
+        .pool
         .view("get_unclaimed_reward")
         .args_json(json!({ "account_id": user1.id(), "farm_id": 0 }))
         .await?
         .json()?;
     let unclaimed: u128 = unclaimed.as_str().unwrap().parse()?;
     let prev_unclaimed = unclaimed;
-    
+
     // Claim tokens
-    user1.call(ctx.pool.id(), "claim")
+    user1
+        .call(ctx.pool.id(), "claim")
         .args_json(json!({ "token_id": ctx.token.id(), "receiver_id": serde_json::Value::Null }))
         .deposit(NearToken::from_yoctonear(1))
         .gas(Gas::from_tgas(300))
@@ -391,20 +396,20 @@ async fn test_farm() -> anyhow::Result<()> {
 
     let user_token_balance = balance_of(&ctx.token, user1.id()).await?;
     assert!(user_token_balance > 0, "Expected tokens to be claimed");
-    assert!(user_token_balance >= prev_unclaimed, "Claimed less than expected");
+    assert!(
+        user_token_balance >= prev_unclaimed,
+        "Claimed less than expected"
+    );
 
     Ok(())
 }
 
 #[tokio::test]
 async fn test_all_rewards_no_burn() -> anyhow::Result<()> {
-    let ctx = init_contracts(
-        NearToken::from_near(5),
-        10,
-        0,
-    ).await?;
+    let ctx = init_contracts(NearToken::from_near(5), 10, 0).await?;
 
-    let owner_balance: serde_json::Value = ctx.pool
+    let owner_balance: serde_json::Value = ctx
+        .pool
         .view("get_account_total_balance")
         .args_json(json!({ "account_id": ctx.owner.id() }))
         .await?
@@ -422,11 +427,7 @@ async fn test_all_rewards_no_burn() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn test_all_rewards_burn() -> anyhow::Result<()> {
-    let ctx = init_contracts(
-        NearToken::from_near(5),
-        10,
-        1,
-    ).await?;
+    let ctx = init_contracts(NearToken::from_near(5), 10, 1).await?;
 
     let _user1 = create_user_and_stake(&ctx, "user1", NearToken::from_near(10_000)).await?;
 
@@ -437,18 +438,11 @@ async fn test_all_rewards_burn() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn test_burn_fee() -> anyhow::Result<()> {
-    let ctx = init_contracts(
-        NearToken::from_near(5),
-        1,
-        3,
-    ).await?;
+    let ctx = init_contracts(NearToken::from_near(5), 1, 3).await?;
 
     let _user1 = create_user_and_stake(&ctx, "user1", NearToken::from_near(10_000)).await?;
 
-    let pool_summary: serde_json::Value = ctx.pool
-        .view("get_pool_summary")
-        .await?
-        .json()?;
+    let pool_summary: serde_json::Value = ctx.pool.view("get_pool_summary").await?.json()?;
     assert_eq!(pool_summary["burn_fee_fraction"]["numerator"], 3);
 
     ctx.pool
@@ -463,10 +457,7 @@ async fn test_burn_fee() -> anyhow::Result<()> {
         .await?
         .into_result()?;
 
-    let pool_summary: serde_json::Value = ctx.pool
-        .view("get_pool_summary")
-        .await?
-        .json()?;
+    let pool_summary: serde_json::Value = ctx.pool.view("get_pool_summary").await?.json()?;
     assert_eq!(pool_summary["burn_fee_fraction"]["numerator"], 1);
     assert_eq!(pool_summary["burn_fee_fraction"]["denominator"], 4);
 
@@ -482,10 +473,7 @@ async fn test_burn_fee() -> anyhow::Result<()> {
         .await?
         .into_result()?;
 
-    let pool_summary: serde_json::Value = ctx.pool
-        .view("get_pool_summary")
-        .await?
-        .json()?;
+    let pool_summary: serde_json::Value = ctx.pool.view("get_pool_summary").await?.json()?;
     assert_eq!(pool_summary["burn_fee_fraction"]["numerator"], 0);
     assert_eq!(pool_summary["burn_fee_fraction"]["denominator"], 1);
 

@@ -1,12 +1,11 @@
-
+use near_contract_standards::fungible_token::metadata::{FT_METADATA_SPEC, FungibleTokenMetadata};
 use near_sdk::collections::{UnorderedMap, UnorderedSet, Vector};
 use near_sdk::json_types::U128;
 use near_sdk::serde::{Deserialize, Serialize};
 use near_sdk::{
-    env, near, ext_contract, near_bindgen, AccountId, BorshStorageKey, EpochHeight, Gas,
-    Promise, PromiseResult, PublicKey, PanicOnDefault, NearToken
+    AccountId, BorshStorageKey, EpochHeight, Gas, NearToken, PanicOnDefault, Promise,
+    PromiseResult, PublicKey, env, ext_contract, near, near_bindgen,
 };
-use near_contract_standards::fungible_token::metadata::{FungibleTokenMetadata, FT_METADATA_SPEC};
 use uint::construct_uint;
 
 use crate::account::{Account, NumStakeShares};
@@ -255,14 +254,22 @@ const GAS_FOR_FT_RESOLVE: Gas = Gas::from_tgas(20);
 /// External interface for ft_on_transfer receivers.
 #[ext_contract(ext_ft_receiver)]
 pub trait ExtFtReceiver {
-    fn ft_on_transfer(&mut self, sender_id: AccountId, amount: U128, msg: String) -> near_sdk::PromiseOrValue<U128>;
+    fn ft_on_transfer(
+        &mut self,
+        sender_id: AccountId,
+        amount: U128,
+        msg: String,
+    ) -> near_sdk::PromiseOrValue<U128>;
 }
 
 #[near_bindgen]
 impl StakingContract {
     /// Total supply equals all shares minus burned shares.
     pub fn ft_total_supply(&self) -> U128 {
-        U128(self.total_stake_shares.saturating_sub(self.total_burn_shares))
+        U128(
+            self.total_stake_shares
+                .saturating_sub(self.total_burn_shares),
+        )
     }
 
     /// Balance of stake shares for a given account.
@@ -278,7 +285,10 @@ impl StakingContract {
     #[payable]
     pub fn ft_transfer(&mut self, receiver_id: AccountId, amount: U128, _memo: Option<String>) {
         near_sdk::assert_one_yocto();
-        assert!(receiver_id.as_str() != crate::internal::ZERO_ADDRESS, "ERR_TRANSFER_TO_ZERO_ADDRESS");
+        assert!(
+            receiver_id.as_str() != crate::internal::ZERO_ADDRESS,
+            "ERR_TRANSFER_TO_ZERO_ADDRESS"
+        );
         let sender_id = env::predecessor_account_id();
         let amount: Balance = amount.0;
         assert!(amount > 0, "ERR_ZERO_AMOUNT");
@@ -297,25 +307,35 @@ impl StakingContract {
         msg: String,
     ) -> Promise {
         near_sdk::assert_one_yocto();
-        assert!(receiver_id.as_str() != crate::internal::ZERO_ADDRESS, "ERR_TRANSFER_TO_ZERO_ADDRESS");
+        assert!(
+            receiver_id.as_str() != crate::internal::ZERO_ADDRESS,
+            "ERR_TRANSFER_TO_ZERO_ADDRESS"
+        );
         let sender_id = env::predecessor_account_id();
         let amount_raw: Balance = amount.0;
         assert!(amount_raw > 0, "ERR_ZERO_AMOUNT");
-    // Ensure enough shares to cover storage if receiver is a new account entry.
-    self.internal_assert_receiver_storage(&receiver_id, amount_raw);
+        // Ensure enough shares to cover storage if receiver is a new account entry.
+        self.internal_assert_receiver_storage(&receiver_id, amount_raw);
 
         // Perform the transfer first.
         self.internal_share_transfer(&sender_id, &receiver_id, amount_raw);
 
         // Initiate receiver callback and then resolve.
+        assert!(
+            env::prepaid_gas()
+                > env::used_gas()
+                    .saturating_add(GAS_FOR_FT_ON_TRANSFER)
+                    .saturating_add(GAS_FOR_FT_RESOLVE),
+            "Not enough gas for the ft_transfer_call"
+        );
         ext_ft_receiver::ext(receiver_id.clone())
-            .with_attached_deposit(NearToken::from_yoctonear(0))
-            .with_static_gas(GAS_FOR_FT_ON_TRANSFER)
+            .with_unused_gas_weight(1)
             .ft_on_transfer(sender_id.clone(), amount, msg)
-            .then(crate::stake::ext_self::ext(env::current_account_id())
-                .with_attached_deposit(NearToken::from_yoctonear(0))
-                .with_static_gas(GAS_FOR_FT_RESOLVE)
-                .ft_resolve_transfer(sender_id, receiver_id, amount))
+            .then(
+                crate::stake::ext_self::ext(env::current_account_id())
+                    .with_static_gas(GAS_FOR_FT_RESOLVE)
+                    .ft_resolve_transfer(sender_id, receiver_id, amount),
+            )
     }
 
     /// FT metadata (NEP-148).
@@ -343,13 +363,19 @@ impl StakingContract {
     /// Returns the min and max storage balance bounds. Max is None for FTs.
     pub fn storage_balance_bounds(&self) -> StorageBalanceBounds {
         // No explicit registration needed: transfered shares cover storage implicitly.
-        StorageBalanceBounds { min: NearToken::from_yoctonear(0), max: None }
+        StorageBalanceBounds {
+            min: NearToken::from_yoctonear(0),
+            max: None,
+        }
     }
 
     /// Returns storage balance for account if registered.
     pub fn storage_balance_of(&self, _account_id: AccountId) -> Option<StorageBalance> {
         // Stub to satisfy apps; no storage is required in advance.
-        Some(StorageBalance { total: NearToken::from_yoctonear(0), available: NearToken::from_yoctonear(0) })
+        Some(StorageBalance {
+            total: NearToken::from_yoctonear(0),
+            available: NearToken::from_yoctonear(0),
+        })
     }
 
     /// Register an account for receiving stake shares. Excess deposit is refunded.
@@ -364,20 +390,26 @@ impl StakingContract {
         if deposit.as_yoctonear() > 0 {
             Promise::new(env::predecessor_account_id()).transfer(deposit);
         }
-        StorageBalance { total: NearToken::from_yoctonear(0), available: NearToken::from_yoctonear(0) }
+        StorageBalance {
+            total: NearToken::from_yoctonear(0),
+            available: NearToken::from_yoctonear(0),
+        }
     }
 
     /// Withdraw not supported (always zero available).
     #[payable]
     pub fn storage_withdraw(&mut self, _amount: Option<U128>) -> StorageBalance {
-        near_sdk::assert_one_yocto();
-        StorageBalance { total: NearToken::from_yoctonear(0), available: NearToken::from_yoctonear(0) }
+        panic!("Storage withdraw is not supported");
     }
 }
 
 impl StakingContract {
     /// If receiver doesn't yet have an account entry, ensure the transferred shares are enough to cover storage.
-    fn internal_assert_receiver_storage(&mut self, receiver_id: &AccountId, amount_shares: Balance) {
+    fn internal_assert_receiver_storage(
+        &mut self,
+        receiver_id: &AccountId,
+        amount_shares: Balance,
+    ) {
         if self.accounts.get(receiver_id).is_some() {
             return;
         }
@@ -386,11 +418,13 @@ impl StakingContract {
         let near_needed = env::storage_byte_cost().as_yoctonear() * bytes;
         if self.total_staked_balance > 0 && self.total_stake_shares > 0 {
             let required_shares = self.num_shares_from_staked_amount_rounded_up(near_needed);
-            assert!(amount_shares >= required_shares, "ERR_INSUFFICIENT_SHARES_FOR_STORAGE");
+            assert!(
+                amount_shares >= required_shares,
+                "ERR_INSUFFICIENT_SHARES_FOR_STORAGE"
+            );
         }
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -403,11 +437,7 @@ mod tests {
 
     use super::*;
 
-    // Note: This test is disabled because VmAction and testing_env_with_promise_results
-    // are no longer available in near-sdk 5.x. To test promise results, use near-workspaces
-    // or near-sandbox for integration testing.
-    /* disabled old test_restake_fail (requires 4.x helpers) */
-    
+    #[test]
     fn test_deposit_withdraw() {
         let mut emulator = Emulator::new(
             owner(),
@@ -547,14 +577,18 @@ mod tests {
         assert_eq_in_near!(acc.staked_balance.0, deposit_amount / 2 + ntoy(10));
         assert!(!acc.can_withdraw);
 
-        assert!(!emulator
-            .contract
-            .is_account_unstaked_balance_available(bob()),);
+        assert!(
+            !emulator
+                .contract
+                .is_account_unstaked_balance_available(bob()),
+        );
         emulator.skip_epochs(4);
         emulator.update_context(bob(), 0);
-        assert!(emulator
-            .contract
-            .is_account_unstaked_balance_available(bob()),);
+        assert!(
+            emulator
+                .contract
+                .is_account_unstaked_balance_available(bob()),
+        );
     }
 
     #[test]
@@ -942,9 +976,7 @@ mod tests {
 
         // Register Charlie for receiving shares.
         emulator.update_context(charlie(), ntoy(1));
-        let _sb = emulator
-            .contract
-            .storage_deposit(Some(charlie()), None);
+        let _sb = emulator.contract.storage_deposit(Some(charlie()), None);
 
         // Check Bob's share balance and transfer half to Charlie.
         let bob_shares = emulator.contract.ft_balance_of(bob()).0;
@@ -953,9 +985,7 @@ mod tests {
 
         // Need 1 yoctoNEAR to call ft_transfer
         emulator.update_context(bob(), 1);
-        emulator
-            .contract
-            .ft_transfer(charlie(), half, None);
+        emulator.contract.ft_transfer(charlie(), half, None);
 
         // Balances updated: Bob decreased, Charlie increased, total preserved (excluding burn).
         let bob_after = emulator.contract.ft_balance_of(bob()).0;

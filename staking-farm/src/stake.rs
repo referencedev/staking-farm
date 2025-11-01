@@ -168,7 +168,8 @@ impl StakingContract {
         // If the stake action failed and the current locked amount is positive, then the contract
         // has to unstake.
         if !stake_action_succeeded && env::account_locked_balance() > NearToken::from_yoctonear(0) {
-            Promise::new(env::current_account_id()).stake(NearToken::from_yoctonear(0), self.stake_public_key.clone());
+            Promise::new(env::current_account_id())
+                .stake(NearToken::from_yoctonear(0), self.stake_public_key.clone());
         }
     }
 
@@ -181,6 +182,7 @@ impl StakingContract {
         amount: Balance,
     ) {
         assert!(amount > 0, "ERR_ZERO_AMOUNT");
+        assert!(sender_id != receiver_id, "ERR_SAME_ACCOUNT");
         // Update epoch/rewards; no need to restake here.
         self.internal_ping();
 
@@ -214,9 +216,9 @@ impl StakingContract {
         use near_sdk::PromiseResult;
         let amount: Balance = amount.0;
         let unused = match env::promise_result(0) {
-            PromiseResult::Successful(value) => {
-                near_sdk::serde_json::from_slice::<U128>(&value).map(|v| v.0).unwrap_or(0)
-            }
+            PromiseResult::Successful(value) => near_sdk::serde_json::from_slice::<U128>(&value)
+                .map(|v| v.0)
+                .unwrap_or(0),
             _ => 0,
         };
         if unused > 0 {

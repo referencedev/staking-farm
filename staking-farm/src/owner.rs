@@ -29,8 +29,12 @@ impl StakingContract {
     /// Returns previous owner if it existed.
     pub(crate) fn internal_set_owner(owner_id: &AccountId) -> Option<AccountId> {
         env::storage_write(OWNER_KEY, owner_id.as_bytes());
-        env::storage_get_evicted()
-            .map(|bytes| String::from_utf8(bytes).expect("INTERNAL FAIL").parse().expect("INTERNAL FAIL"))
+        env::storage_get_evicted().map(|bytes| {
+            String::from_utf8(bytes)
+                .expect("INTERNAL FAIL")
+                .parse()
+                .expect("INTERNAL FAIL")
+        })
     }
 
     /// Store the factory in the storage independent of the STATE.
@@ -107,7 +111,8 @@ impl StakingContract {
 
         self.internal_ping();
         self.paused = true;
-        Promise::new(env::current_account_id()).stake(NearToken::from_yoctonear(0), self.stake_public_key.clone());
+        Promise::new(env::current_account_id())
+            .stake(NearToken::from_yoctonear(0), self.stake_public_key.clone());
     }
 
     /// Owner's method.
@@ -202,7 +207,12 @@ impl StakingContract {
             String::from_utf8(bytes).expect("INTERNAL_FAIL")
         } else {
             let acc = env::current_account_id();
-            acc.as_str().split('.').next().unwrap_or(acc.as_str()).to_string().to_uppercase()
+            acc.as_str()
+                .split('.')
+                .next()
+                .unwrap_or(acc.as_str())
+                .to_string()
+                .to_uppercase()
         }
     }
 }
@@ -255,7 +265,11 @@ pub extern "C" fn upgrade() {
             0,
             0,
             &NO_DEPOSIT as *const u128 as _,
-            (env::prepaid_gas().saturating_sub(env::used_gas()).saturating_sub(GET_CODE_GAS).saturating_sub(UPGRADE_GAS_LEFTOVER)).as_gas(),
+            (env::prepaid_gas()
+                .saturating_sub(env::used_gas())
+                .saturating_sub(GET_CODE_GAS)
+                .saturating_sub(UPGRADE_GAS_LEFTOVER))
+            .as_gas(),
         );
         sys::promise_return(callback_id);
     }
@@ -273,7 +287,7 @@ pub extern "C" fn update() {
         ERR_MUST_BE_SELF
     );
     // Load code into register 0 result from the promise.
-    match unsafe { sys::promise_result(0, 0) }{
+    match unsafe { sys::promise_result(0, 0) } {
         1 => {}
         // Not ready or failed.
         _ => env::panic_str("Failed to fetch the new code"),
@@ -295,7 +309,10 @@ pub extern "C" fn update() {
             0,
             0,
             &NO_DEPOSIT as *const u128 as _,
-            (env::prepaid_gas().saturating_sub(env::used_gas()).saturating_sub(UPDATE_GAS_LEFTOVER)).as_gas(),
+            (env::prepaid_gas()
+                .saturating_sub(env::used_gas())
+                .saturating_sub(UPDATE_GAS_LEFTOVER))
+            .as_gas(),
         );
         sys::promise_return(promise_id);
     }
