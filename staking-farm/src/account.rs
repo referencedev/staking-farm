@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use near_sdk::{near, AccountId, EpochHeight};
+use near_sdk::{AccountId, EpochHeight, near};
 
 use crate::{Balance, U256};
 
@@ -31,4 +31,3 @@ pub struct Account {
     #[borsh(skip)]
     pub is_burn_account: bool,
 }
-

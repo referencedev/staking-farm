@@ -1,8 +1,8 @@
 use crate::owner::{FACTORY_KEY, OWNER_KEY};
 use crate::stake::ext_self;
 use crate::*;
-use near_sdk::log;
 use near_sdk::NearToken;
+use near_sdk::log;
 
 /// Zero address is implicit address that doesn't have a key for it.
 /// Used for burning tokens.
@@ -24,11 +24,16 @@ impl StakingContract {
         // Stakes with the staking public key. If the public key is invalid the entire function
         // call will be rolled back.
         Promise::new(env::current_account_id())
-            .stake(NearToken::from_yoctonear(self.total_staked_balance), self.stake_public_key.clone())
-            .then(ext_self::ext(env::current_account_id())
-                .with_attached_deposit(NearToken::from_yoctonear(NO_DEPOSIT))
-                .with_static_gas(ON_STAKE_ACTION_GAS)
-                .on_stake_action());
+            .stake(
+                NearToken::from_yoctonear(self.total_staked_balance),
+                self.stake_public_key.clone(),
+            )
+            .then(
+                ext_self::ext(env::current_account_id())
+                    .with_attached_deposit(NearToken::from_yoctonear(NO_DEPOSIT))
+                    .with_static_gas(ON_STAKE_ACTION_GAS)
+                    .on_stake_action(),
+            );
     }
 
     pub(crate) fn internal_deposit(&mut self) -> u128 {
@@ -230,8 +235,9 @@ impl StakingContract {
         // NOTE: We need to subtract `attached_deposit` in case `ping` called from `deposit` call
         // since the attached deposit gets included in the `account_balance`, and we have not
         // accounted it yet.
-        let total_balance =
-            env::account_locked_balance().as_yoctonear() + env::account_balance().as_yoctonear() - env::attached_deposit().as_yoctonear();
+        let total_balance = env::account_locked_balance().as_yoctonear()
+            + env::account_balance().as_yoctonear()
+            - env::attached_deposit().as_yoctonear();
 
         assert!(
             total_balance >= self.last_total_balance,
