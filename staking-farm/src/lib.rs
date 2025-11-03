@@ -283,7 +283,7 @@ impl StakingContract {
 
     /// Simple transfer of stake shares as FT.
     #[payable]
-    pub fn ft_transfer(&mut self, receiver_id: AccountId, amount: U128, _memo: Option<String>) {
+    pub fn ft_transfer(&mut self, receiver_id: AccountId, amount: U128) {
         near_sdk::assert_one_yocto();
         assert!(
             receiver_id.as_str() != crate::internal::ZERO_ADDRESS,
@@ -303,7 +303,6 @@ impl StakingContract {
         &mut self,
         receiver_id: AccountId,
         amount: U128,
-        _memo: Option<String>,
         msg: String,
     ) -> Promise {
         near_sdk::assert_one_yocto();
