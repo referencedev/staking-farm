@@ -320,14 +320,9 @@ impl StakingContract {
         self.internal_share_transfer(&sender_id, &receiver_id, amount_raw);
 
         // Initiate receiver callback and then resolve.
-        assert!(
-            env::prepaid_gas()
-                > env::used_gas()
-                    .saturating_add(GAS_FOR_FT_ON_TRANSFER)
-                    .saturating_add(GAS_FOR_FT_RESOLVE),
-            "Not enough gas for the ft_transfer_call"
-        );
         ext_ft_receiver::ext(receiver_id.clone())
+            // Using both static gas and unused gas weight => logic that at least static gas and add unused gas weight.
+            .with_static_gas(GAS_FOR_FT_ON_TRANSFER)
             .with_unused_gas_weight(1)
             .ft_on_transfer(sender_id.clone(), amount, msg)
             .then(
@@ -984,7 +979,7 @@ mod tests {
 
         // Need 1 yoctoNEAR to call ft_transfer
         emulator.update_context(bob(), 1);
-        emulator.contract.ft_transfer(charlie(), half, None);
+        emulator.contract.ft_transfer(charlie(), half);
 
         // Balances updated: Bob decreased, Charlie increased, total preserved (excluding burn).
         let bob_after = emulator.contract.ft_balance_of(bob()).0;

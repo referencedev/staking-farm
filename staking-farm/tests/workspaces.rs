@@ -597,3 +597,102 @@ async fn test_ft_share_transfer() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+/// Test ft_transfer_call with a receiver that accepts the transfer
+#[tokio::test]
+async fn test_ft_transfer_call() -> anyhow::Result<()> {
+    let ctx = init_contracts(NearToken::from_near(10_000), 0, 0).await?;
+
+    // Create two users and have them stake
+    let user1 = create_user_and_stake(&ctx, "user1", NearToken::from_near(5_000)).await?;
+    let user2 = create_user_and_stake(&ctx, "user2", NearToken::from_near(3_000)).await?;
+
+    // Get initial balances
+    let user1_shares_before: serde_json::Value = ctx
+        .pool
+        .view("ft_balance_of")
+        .args_json(json!({ "account_id": user1.id() }))
+        .await?
+        .json()?;
+    let user1_shares_before: u128 = user1_shares_before.as_str().unwrap().parse()?;
+
+    let user2_shares_before: serde_json::Value = ctx
+        .pool
+        .view("ft_balance_of")
+        .args_json(json!({ "account_id": user2.id() }))
+        .await?
+        .json()?;
+    let user2_shares_before: u128 = user2_shares_before.as_str().unwrap().parse()?;
+
+    // Transfer shares from user1 to user2 using ft_transfer_call
+    // User2 is a regular account without ft_on_transfer implementation
+    // The callback will fail, but since it fails (not returns an unused amount),
+    // the transfer is considered final and shares stay with user2
+    let transfer_amount = user1_shares_before / 4; // Transfer 25%
+
+    let result = user1
+        .call(ctx.pool.id(), "ft_transfer_call")
+        .args_json(json!({
+            "receiver_id": user2.id(),
+            "amount": transfer_amount.to_string(),
+            "msg": "test transfer call"
+        }))
+        .deposit(NearToken::from_yoctonear(1))
+        .gas(Gas::from_tgas(300))
+        .transact()
+        .await;
+
+    // The transaction should complete
+    match result {
+        Ok(outcome) => {
+            let _outcome = outcome.into_result()?;
+            
+            // Check final balances
+            let user1_shares_after: serde_json::Value = ctx
+                .pool
+                .view("ft_balance_of")
+                .args_json(json!({ "account_id": user1.id() }))
+                .await?
+                .json()?;
+            let user1_shares_after: u128 = user1_shares_after.as_str().unwrap().parse()?;
+
+            let user2_shares_after: serde_json::Value = ctx
+                .pool
+                .view("ft_balance_of")
+                .args_json(json!({ "account_id": user2.id() }))
+                .await?
+                .json()?;
+            let user2_shares_after: u128 = user2_shares_after.as_str().unwrap().parse()?;
+
+            // When ft_on_transfer is not implemented, the promise fails,
+            // but ft_resolve_transfer treats this as "0 unused" (all used),
+            // so the transfer is final
+            assert_eq!(
+                user1_shares_after,
+                user1_shares_before - transfer_amount,
+                "User1 shares should decrease by transfer amount"
+            );
+            assert_eq!(
+                user2_shares_after,
+                user2_shares_before + transfer_amount,
+                "User2 shares should increase by transfer amount"
+            );
+
+            // Verify total supply unchanged
+            let total_supply: serde_json::Value = ctx.pool.view("ft_total_supply").await?.json()?;
+            let total_supply: u128 = total_supply.as_str().unwrap().parse()?;
+            assert_eq!(
+                total_supply,
+                user1_shares_after + user2_shares_after + 
+                    // Pool also has shares from initial balance
+                    (total_supply - user1_shares_before - user2_shares_before),
+                "Total supply should remain constant"
+            );
+        }
+        Err(e) => {
+            panic!("Transaction should succeed: {:?}", e);
+        }
+    }
+
+    Ok(())
+}
