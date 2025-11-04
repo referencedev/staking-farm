@@ -337,6 +337,7 @@ async fn test_stake_operations() -> anyhow::Result<()> {
 
     Ok(())
 }
+
 /// Test clean calculations without rewards and burn.
 #[tokio::test]
 async fn test_farm() -> anyhow::Result<()> {
@@ -476,6 +477,123 @@ async fn test_burn_fee() -> anyhow::Result<()> {
     let pool_summary: serde_json::Value = ctx.pool.view("get_pool_summary").await?.json()?;
     assert_eq!(pool_summary["burn_fee_fraction"]["numerator"], 0);
     assert_eq!(pool_summary["burn_fee_fraction"]["denominator"], 1);
+
+    Ok(())
+}
+
+/// Test transferring shares between accounts using FT interface
+#[tokio::test]
+async fn test_ft_share_transfer() -> anyhow::Result<()> {
+    let ctx = init_contracts(NearToken::from_near(10_000), 0, 0).await?;
+
+    // Create two users and have them stake
+    let user1 = create_user_and_stake(&ctx, "user1", NearToken::from_near(5_000)).await?;
+    let user2 = create_user_and_stake(&ctx, "user2", NearToken::from_near(3_000)).await?;
+
+    // Get total supply before transfer
+    let total_supply_before: serde_json::Value = ctx.pool.view("ft_total_supply").await?.json()?;
+    let total_supply_before: u128 = total_supply_before.as_str().unwrap().parse()?;
+
+    // Check initial staked balances (FT balance = stake shares with 24 decimals)
+    let user1_shares: serde_json::Value = ctx
+        .pool
+        .view("ft_balance_of")
+        .args_json(json!({ "account_id": user1.id() }))
+        .await?
+        .json()?;
+    let user1_shares: u128 = user1_shares.as_str().unwrap().parse()?;
+
+    let user2_shares: serde_json::Value = ctx
+        .pool
+        .view("ft_balance_of")
+        .args_json(json!({ "account_id": user2.id() }))
+        .await?
+        .json()?;
+    let user2_shares: u128 = user2_shares.as_str().unwrap().parse()?;
+
+    assert!(user1_shares > 0, "User1 should have shares");
+    assert!(user2_shares > 0, "User2 should have shares");
+
+    // Transfer some shares from user1 to user2
+    let transfer_amount = user1_shares / 4; // Transfer 25% of user1's shares
+
+    user1
+        .call(ctx.pool.id(), "ft_transfer")
+        .args_json(json!({
+            "receiver_id": user2.id(),
+            "amount": transfer_amount.to_string(),
+            "memo": "Share transfer test"
+        }))
+        .deposit(NearToken::from_yoctonear(1))
+        .gas(Gas::from_tgas(300))
+        .transact()
+        .await?
+        .into_result()?;
+
+    // Check balances after transfer
+    let user1_shares_after: serde_json::Value = ctx
+        .pool
+        .view("ft_balance_of")
+        .args_json(json!({ "account_id": user1.id() }))
+        .await?
+        .json()?;
+    let user1_shares_after: u128 = user1_shares_after.as_str().unwrap().parse()?;
+
+    let user2_shares_after: serde_json::Value = ctx
+        .pool
+        .view("ft_balance_of")
+        .args_json(json!({ "account_id": user2.id() }))
+        .await?
+        .json()?;
+    let user2_shares_after: u128 = user2_shares_after.as_str().unwrap().parse()?;
+
+    // Verify the transfer
+    assert_eq!(
+        user1_shares_after,
+        user1_shares - transfer_amount,
+        "User1 should have fewer shares"
+    );
+    assert_eq!(
+        user2_shares_after,
+        user2_shares + transfer_amount,
+        "User2 should have more shares"
+    );
+
+    // Verify total supply is unchanged after transfer
+    let total_supply_after: serde_json::Value = ctx.pool.view("ft_total_supply").await?.json()?;
+    let total_supply_after: u128 = total_supply_after.as_str().unwrap().parse()?;
+    assert_eq!(
+        total_supply_after, total_supply_before,
+        "Total supply should remain constant after transfer"
+    );
+
+    // Verify staked balances match shares (1:1 ratio initially)
+    let user1_staked: serde_json::Value = ctx
+        .pool
+        .view("get_account_staked_balance")
+        .args_json(json!({ "account_id": user1.id() }))
+        .await?
+        .json()?;
+    let user1_staked: u128 = user1_staked.as_str().unwrap().parse()?;
+
+    let user2_staked: serde_json::Value = ctx
+        .pool
+        .view("get_account_staked_balance")
+        .args_json(json!({ "account_id": user2.id() }))
+        .await?
+        .json()?;
+    let user2_staked: u128 = user2_staked.as_str().unwrap().parse()?;
+
+    // Shares are in 24 decimals, staked balance is in yoctoNEAR (24 decimals)
+    // They should match 1:1
+    assert_eq!(
+        user1_shares_after, user1_staked,
+        "User1 shares should match staked balance"
+    );
+    assert_eq!(
+        user2_shares_after, user2_staked,
+        "User2 shares should match staked balance"
+    );
 
     Ok(())
 }
