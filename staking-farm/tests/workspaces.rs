@@ -646,7 +646,7 @@ async fn test_ft_transfer_call() -> anyhow::Result<()> {
     match result {
         Ok(outcome) => {
             let _outcome = outcome.into_result()?;
-            
+
             // Check final balances
             let user1_shares_after: serde_json::Value = ctx
                 .pool
@@ -683,9 +683,10 @@ async fn test_ft_transfer_call() -> anyhow::Result<()> {
             let total_supply: u128 = total_supply.as_str().unwrap().parse()?;
             assert_eq!(
                 total_supply,
-                user1_shares_after + user2_shares_after + 
-                    // Pool also has shares from initial balance
-                    (total_supply - user1_shares_before - user2_shares_before),
+                // Pool also has shares from initial balance
+                user1_shares_after
+                    + user2_shares_after
+                    + (total_supply - user1_shares_before - user2_shares_before),
                 "Total supply should remain constant"
             );
         }
@@ -693,6 +694,105 @@ async fn test_ft_transfer_call() -> anyhow::Result<()> {
             panic!("Transaction should succeed: {:?}", e);
         }
     }
+
+    Ok(())
+}
+
+/// Test ft_transfer_call with insufficient prepaid gas: should fail before transfer occurs
+#[tokio::test]
+async fn test_ft_transfer_call_insufficient_gas() -> anyhow::Result<()> {
+    let ctx = init_contracts(NearToken::from_near(10_000), 0, 0).await?;
+
+    // Create two users and have them stake
+    let user1 = create_user_and_stake(&ctx, "user1", NearToken::from_near(5_000)).await?;
+    let user2 = create_user_and_stake(&ctx, "user2", NearToken::from_near(3_000)).await?;
+
+    // Snapshot balances
+    let u1_before: u128 = ctx
+        .pool
+        .view("ft_balance_of")
+        .args_json(json!({ "account_id": user1.id() }))
+        .await?
+        .json::<serde_json::Value>()?
+        .as_str()
+        .unwrap()
+        .parse()?;
+
+    let u2_before: u128 = ctx
+        .pool
+        .view("ft_balance_of")
+        .args_json(json!({ "account_id": user2.id() }))
+        .await?
+        .json::<serde_json::Value>()?
+        .as_str()
+        .unwrap()
+        .parse()?;
+
+    // Try ft_transfer_call with very small gas so the contract rejects early
+    let amount = u1_before / 10;
+    let outcome = user1
+        .call(ctx.pool.id(), "ft_transfer_call")
+        .args_json(json!({
+            "receiver_id": user2.id(),
+            "amount": amount.to_string(),
+            "msg": "any"
+        }))
+        .deposit(NearToken::from_yoctonear(1))
+        .gas(Gas::from_tgas(1))
+        .transact()
+        .await;
+
+    // Expect failure with the specific error message
+    match outcome {
+        Ok(res) => {
+            let status = res.into_result();
+            assert!(status.is_err(), "Call should fail due to insufficient gas");
+            let err = format!("{:?}", status.err().unwrap());
+            assert!(
+                err.contains("Not enough gas for the ft_transfer_call")
+                    || err.contains("Exceeded the prepaid gas."),
+                "Unexpected error: {}",
+                err
+            );
+        }
+        Err(e) => {
+            // Some workspaces versions surface the failure at this layer — validate message
+            let err = format!("{:?}", e);
+            assert!(
+                err.contains("Not enough gas for the ft_transfer_call")
+                    || err.contains("Exceeded the prepaid gas."),
+            );
+        }
+    }
+
+    // Balances should be unchanged (transfer should not have executed)
+    let u1_after: u128 = ctx
+        .pool
+        .view("ft_balance_of")
+        .args_json(json!({ "account_id": user1.id() }))
+        .await?
+        .json::<serde_json::Value>()?
+        .as_str()
+        .unwrap()
+        .parse()?;
+    let u2_after: u128 = ctx
+        .pool
+        .view("ft_balance_of")
+        .args_json(json!({ "account_id": user2.id() }))
+        .await?
+        .json::<serde_json::Value>()?
+        .as_str()
+        .unwrap()
+        .parse()?;
+
+    assert_eq!(
+        u1_after, u1_before,
+        "Sender balance should remain unchanged"
+    );
+    assert_eq!(
+        u2_after, u2_before,
+        "Receiver balance should remain unchanged"
+    );
 
     Ok(())
 }

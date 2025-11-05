@@ -989,4 +989,76 @@ mod tests {
         assert_eq!(charlie_after, half.0);
         assert_eq!(bob_after + charlie_after, bob_shares);
     }
+
+    #[test]
+    #[should_panic(expected = "ERR_ZERO_AMOUNT")]
+    fn test_ft_transfer_zero_amount_should_panic() {
+        let mut emulator = Emulator::new(
+            owner(),
+            "KuTCtARNzxZQ3YvXDeLjx83FDqxv2SdQTSbiq876zR7"
+                .parse()
+                .unwrap(),
+            zero_fee(),
+        );
+
+        // Bob stakes to have an account entry
+        emulator.deposit_and_stake(bob(), ntoy(1));
+
+        emulator.update_context(bob(), 1);
+        emulator.contract.ft_transfer(charlie(), U128(0)); // should panic ERR_ZERO_AMOUNT
+    }
+
+    #[test]
+    #[should_panic(expected = "ERR_SAME_ACCOUNT")]
+    fn test_ft_transfer_same_account_should_panic() {
+        let mut emulator = Emulator::new(
+            owner(),
+            "KuTCtARNzxZQ3YvXDeLjx83FDqxv2SdQTSbiq876zR7"
+                .parse()
+                .unwrap(),
+            zero_fee(),
+        );
+        // stake some to have shares
+        emulator.deposit_and_stake(bob(), ntoy(10));
+
+        // Try to transfer to self
+        let amount = U128(ntoy(1));
+        emulator.update_context(bob(), 1);
+        emulator.contract.ft_transfer(bob(), amount); // should panic ERR_SAME_ACCOUNT
+    }
+
+    #[test]
+    #[should_panic(expected = "ERR_TRANSFER_TO_ZERO_ADDRESS")]
+    fn test_ft_transfer_to_zero_address_should_panic() {
+        let mut emulator = Emulator::new(
+            owner(),
+            "KuTCtARNzxZQ3YvXDeLjx83FDqxv2SdQTSbiq876zR7"
+                .parse()
+                .unwrap(),
+            zero_fee(),
+        );
+        emulator.deposit_and_stake(bob(), ntoy(5));
+
+        let zero_id: AccountId = crate::internal::ZERO_ADDRESS.parse().unwrap();
+        emulator.update_context(bob(), 1);
+        emulator.contract.ft_transfer(zero_id, U128(ntoy(1))); // should panic ERR_TRANSFER_TO_ZERO_ADDRESS
+    }
+
+    #[test]
+    #[should_panic(expected = "ERR_INSUFFICIENT_SHARES")]
+    fn test_ft_transfer_insufficient_shares_should_panic() {
+        let mut emulator = Emulator::new(
+            owner(),
+            "KuTCtARNzxZQ3YvXDeLjx83FDqxv2SdQTSbiq876zR7"
+                .parse()
+                .unwrap(),
+            zero_fee(),
+        );
+
+        // Bob stakes 1 yocto, tries to transfer more
+        emulator.deposit_and_stake(bob(), ntoy(1));
+
+        emulator.update_context(bob(), 1);
+        emulator.contract.ft_transfer(charlie(), U128(ntoy(2))); // should panic ERR_INSUFFICIENT_SHARES
+    }
 }
