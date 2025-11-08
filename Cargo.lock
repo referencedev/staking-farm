@@ -3519,6 +3519,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "mock-receiver"
+version = "0.1.0"
+dependencies = [
+ "borsh 1.5.7",
+ "near-sdk 5.17.2",
+]
+
+[[package]]
 name = "more-asserts"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6947,6 +6955,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "test-token"
+version = "0.1.0"
+dependencies = [
+ "borsh 1.5.7",
+ "near-contract-standards 5.17.2",
+ "near-sdk 5.17.2",
+]
+
+[[package]]
 name = "thiserror"
 version = "1.0.69"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8254,6 +8271,14 @@ dependencies = [
  "either",
  "lazy_static",
  "libc",
+]
+
+[[package]]
+name = "whitelist"
+version = "0.1.0"
+dependencies = [
+ "borsh 1.5.7",
+ "near-sdk 5.17.2",
 ]
 
 [[package]]

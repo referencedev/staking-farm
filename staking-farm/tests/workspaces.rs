@@ -7,10 +7,10 @@ const STAKING_KEY: &str = "KuTCtARNzxZQ3YvXDeLjx83FDqxv2SdQTSbiq876zR7";
 const ONE_SEC_IN_NS: u64 = 1_000_000_000;
 const WHITELIST_ACCOUNT_ID: &str = "whitelist";
 
-// WASM file paths
+// WASM file paths (built with `cargo near build non-reproducible-wasm`)
 const STAKING_FARM_WASM: &str = "../target/near/staking_farm/staking_farm.wasm";
-const TEST_TOKEN_WASM: &str = "../res/test_token.wasm";
-const WHITELIST_WASM: &str = "../res/whitelist.wasm";
+const TEST_TOKEN_WASM: &str = "../target/near/test_token/test_token.wasm";
+const WHITELIST_WASM: &str = "../target/near/whitelist/whitelist.wasm";
 
 fn token_id() -> AccountId {
     "token".parse().unwrap()
@@ -21,14 +21,14 @@ fn whitelist_id() -> AccountId {
 }
 
 /// Helper struct to hold common test context
-struct TestContext {
-    worker: Worker<near_workspaces::network::Sandbox>,
-    pool: Contract,
-    token: Contract,
-    owner: Account,
+pub struct TestContext {
+    pub worker: Worker<near_workspaces::network::Sandbox>,
+    pub pool: Contract,
+    pub token: Contract,
+    pub owner: Account,
 }
 
-async fn init_contracts(
+pub async fn init_contracts(
     pool_initial_balance: NearToken,
     reward_ratio: u32,
     burn_ratio: u32,
@@ -153,7 +153,7 @@ async fn init_contracts(
     })
 }
 
-async fn storage_register(
+pub async fn storage_register(
     token: &Contract,
     account_id: &AccountId,
     _payer: &Account,
@@ -179,7 +179,7 @@ async fn balance_of(token: &Contract, account_id: &AccountId) -> anyhow::Result<
     Ok(balance.as_str().unwrap().parse().unwrap())
 }
 
-async fn create_user_and_stake(
+pub async fn create_user_and_stake(
     ctx: &TestContext,
     name: &str,
     stake_amount: NearToken,

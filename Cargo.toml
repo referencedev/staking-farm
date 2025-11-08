@@ -3,6 +3,9 @@ resolver = "3"
 members = [
     "./staking-farm",
     "./staking-factory",
+    "./mock-receiver",
+    "./whitelist",
+    "./test-token",
 ]
 
 [profile.release]
