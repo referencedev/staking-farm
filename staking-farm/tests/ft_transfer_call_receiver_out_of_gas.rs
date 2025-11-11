@@ -98,12 +98,12 @@ async fn test_ft_transfer_call_receiver_out_of_gas() -> anyhow::Result<()> {
         .await?
         .into_result()?;
 
-    // Register mock receiver for FT shares (no-op but standard API)
+    // Register mock receiver for FT shares
     let _ = ctx
         .owner
         .call(ctx.pool.id(), "storage_deposit")
         .args_json(json!({ "account_id": mock_receiver.id(), "registration_only": true }))
-        .deposit(NearToken::from_millinear(1))
+        .deposit(NearToken::from_near(1))
         .gas(Gas::from_tgas(50))
         .transact()
         .await?;

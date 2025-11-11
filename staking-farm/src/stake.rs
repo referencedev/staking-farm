@@ -183,7 +183,10 @@ impl StakingContract {
     ) {
         assert!(amount > 0, "ERR_ZERO_AMOUNT");
         assert!(sender_id != receiver_id, "ERR_SAME_ACCOUNT");
-        assert!(receiver_id != &env::current_account_id(), "ERR_TRANSFER_TO_CONTRACT");
+        assert!(
+            receiver_id != &env::current_account_id(),
+            "ERR_TRANSFER_TO_CONTRACT"
+        );
         // Update epoch/rewards; no need to restake here.
         self.internal_ping();
 
