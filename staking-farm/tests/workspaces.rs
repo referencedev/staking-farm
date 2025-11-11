@@ -9,6 +9,7 @@ const WHITELIST_ACCOUNT_ID: &str = "whitelist";
 
 // WASM file paths (built with `cargo near build non-reproducible-wasm`)
 const STAKING_FARM_WASM: &str = "../target/near/staking_farm/staking_farm.wasm";
+const STAKING_FACTORY_WASM: &str = "../res/staking_factory_local.wasm";
 const TEST_TOKEN_WASM: &str = "../target/near/test_token/test_token.wasm";
 const WHITELIST_WASM: &str = "../target/near/whitelist/whitelist.wasm";
 
@@ -793,6 +794,144 @@ async fn test_ft_transfer_call_insufficient_gas() -> anyhow::Result<()> {
         u2_after, u2_before,
         "Receiver balance should remain unchanged"
     );
+
+    Ok(())
+}
+
+/// End-to-end test covering the owner-driven contract upgrade path via the factory
+#[tokio::test]
+async fn test_contract_upgrade_flow() -> anyhow::Result<()> {
+    let worker = near_workspaces::sandbox().await?;
+    let root = worker.root_account()?;
+
+    let staking_wasm = std::fs::read(STAKING_FARM_WASM)?;
+    let factory_wasm = std::fs::read(STAKING_FACTORY_WASM)?;
+
+    let owner = root
+        .create_subaccount("upgradeowner")
+        .initial_balance(NearToken::from_near(1_000))
+        .transact()
+        .await?
+        .into_result()?;
+
+    let whitelist = root
+        .create_subaccount("upgradewhitelist")
+        .initial_balance(NearToken::from_near(10))
+        .transact()
+        .await?
+        .into_result()?;
+
+    // Deploy factory contract and initialize it with itself as owner so it can approve new code.
+    let factory = root
+        .create_subaccount("upgradefactory")
+        .initial_balance(NearToken::from_near(1_000))
+        .transact()
+        .await?
+        .into_result()?;
+    let factory = factory.deploy(&factory_wasm).await?.into_result()?;
+    factory
+        .call("new")
+        .args_json(json!({
+            "owner_id": factory.id(),
+            "staking_pool_whitelist_account_id": whitelist.id(),
+        }))
+        .gas(Gas::from_tgas(100))
+        .transact()
+        .await?
+        .into_result()?;
+
+    // Store current staking contract code in the factory and whitelist it for upgrades.
+    let code_hash: String = factory
+        .call("store")
+        .args(staking_wasm.clone())
+        .deposit(NearToken::from_near(20))
+        .gas(Gas::from_tgas(100))
+        .transact()
+        .await?
+        .json()?;
+    factory
+        .call("allow_contract")
+        .args_json(json!({ "code_hash": code_hash }))
+        .transact()
+        .await?
+        .into_result()?;
+
+    // Create and initialize the staking pool with the factory as predecessor so it becomes the stored factory_id.
+    let pool = root
+        .create_subaccount("upgradepool")
+        .initial_balance(NearToken::from_near(2_000))
+        .transact()
+        .await?
+        .into_result()?;
+    let pool = pool.deploy(&staking_wasm).await?.into_result()?;
+    factory
+        .as_account()
+        .call(pool.id(), "new")
+        .args_json(json!({
+            "owner_id": owner.id(),
+            "stake_public_key": STAKING_KEY,
+            "reward_fee_fraction": { "numerator": 1, "denominator": 10 },
+            "burn_fee_fraction": { "numerator": 0, "denominator": 10 }
+        }))
+        .gas(Gas::from_tgas(300))
+        .transact()
+        .await?
+        .into_result()?;
+
+    // Sanity-check stored factory id.
+    let stored_factory: AccountId = pool.view("get_factory_id").await?.json()?;
+    assert_eq!(stored_factory, factory.id().clone());
+
+    // Customize metadata and stake to create on-chain state that must survive the upgrade.
+    let custom_symbol = "UPGD";
+    owner
+        .call(pool.id(), "set_ft_symbol")
+        .args_json(json!({ "symbol": custom_symbol }))
+        .transact()
+        .await?
+        .into_result()?;
+    owner
+        .call(pool.id(), "deposit_and_stake")
+        .deposit(NearToken::from_near(10))
+        .gas(Gas::from_tgas(200))
+        .transact()
+        .await?
+        .into_result()?;
+
+    let metadata_before: serde_json::Value = pool.view("ft_metadata").await?.json()?;
+    assert_eq!(metadata_before["symbol"], custom_symbol);
+    let owner_shares_before: u128 = pool
+        .view("ft_balance_of")
+        .args_json(json!({ "account_id": owner.id() }))
+        .await?
+        .json::<String>()?
+        .parse()?;
+
+    // Owner triggers upgrade fetching code from the trusted factory.
+    owner
+        .call(pool.id(), "upgrade")
+        .args_json(json!({ "code_hash": code_hash }))
+        .max_gas()
+        .transact()
+        .await?
+        .into_result()?;
+
+    // Metadata and account stake must remain intact after upgrade + migration.
+    let metadata_after: serde_json::Value = pool.view("ft_metadata").await?.json()?;
+    assert_eq!(metadata_after["symbol"], custom_symbol);
+    let owner_shares_after: u128 = pool
+        .view("ft_balance_of")
+        .args_json(json!({ "account_id": owner.id() }))
+        .await?
+        .json::<String>()?
+        .parse()?;
+    assert_eq!(
+        owner_shares_after, owner_shares_before,
+        "Upgrade should preserve staked share balances"
+    );
+
+    let owner_id: AccountId = pool.view("get_owner_id").await?.json()?;
+    assert_eq!(owner_id, owner.id().clone());
 
     Ok(())
 }
