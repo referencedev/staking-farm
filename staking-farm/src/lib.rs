@@ -44,6 +44,7 @@ const NUM_EPOCHS_TO_UNLOCK: EpochHeight = 4;
 /// Conservative estimate of bytes required to create a new `Account` entry in storage.
 /// Used to ensure incoming FT transfers of stake shares cover storage for a new receiver.
 const ACCOUNT_STORAGE_BYTES: u64 = 500;
+const REGISTERED_ACCOUNT_PREFIX: &[u8] = b"regacc";
 
 construct_uint! {
     /// 256-bit unsigned integer.
@@ -61,6 +62,7 @@ pub enum StorageKeys {
     Farms,
     AuthorizedUsers,
     AuthorizedFarmTokens,
+    RegisteredAccounts,
 }
 
 /// Tracking balance for burning.
@@ -199,6 +201,7 @@ impl StakingContract {
     ) -> Self {
         assert!(!env::state_exists(), "Already initialized");
         reward_fee_fraction.assert_valid();
+        burn_fee_fraction.assert_valid();
         assert!(
             env::is_valid_account_id(owner_id.as_bytes()),
             "The owner account ID is invalid"
@@ -354,20 +357,44 @@ use near_contract_standards::storage_management::{StorageBalance, StorageBalance
 
 #[near_bindgen]
 impl StakingContract {
+    fn storage_registration_key(account_id: &AccountId) -> Vec<u8> {
+        let mut key = REGISTERED_ACCOUNT_PREFIX.to_vec();
+        key.extend(account_id.as_bytes());
+        key
+    }
+
+    fn storage_is_registered(account_id: &AccountId) -> bool {
+        env::storage_has_key(&Self::storage_registration_key(account_id))
+    }
+
+    fn storage_register_account(account_id: &AccountId) {
+        env::storage_write(&Self::storage_registration_key(account_id), &[]);
+    }
+
+    fn storage_take_registration(account_id: &AccountId) -> bool {
+        env::storage_remove(&Self::storage_registration_key(account_id))
+    }
+
+    fn min_storage_balance() -> NearToken {
+        let byte_cost = env::storage_byte_cost().as_yoctonear();
+        NearToken::from_yoctonear(byte_cost * ACCOUNT_STORAGE_BYTES as u128)
+    }
+
     /// Returns the min and max storage balance bounds. Max is None for FTs.
     pub fn storage_balance_bounds(&self) -> StorageBalanceBounds {
-        // No explicit registration needed: transfered shares cover storage implicitly.
         StorageBalanceBounds {
-            min: NearToken::from_yoctonear(0),
+            min: Self::min_storage_balance(),
             max: None,
         }
     }
 
     /// Returns storage balance for account if registered.
-    pub fn storage_balance_of(&self, _account_id: AccountId) -> Option<StorageBalance> {
-        // Stub to satisfy apps; no storage is required in advance.
+    pub fn storage_balance_of(&self, account_id: AccountId) -> Option<StorageBalance> {
+        if self.accounts.get(&account_id).is_none() && !Self::storage_is_registered(&account_id) {
+            return None;
+        }
         Some(StorageBalance {
-            total: NearToken::from_yoctonear(0),
+            total: Self::min_storage_balance(),
             available: NearToken::from_yoctonear(0),
         })
     }
@@ -376,24 +403,58 @@ impl StakingContract {
     #[payable]
     pub fn storage_deposit(
         &mut self,
-        _account_id: Option<AccountId>,
+        account_id: Option<AccountId>,
         _registration_only: Option<bool>,
     ) -> StorageBalance {
-        // Registration not required; refund any attached deposit in full.
+        let account_id = account_id.unwrap_or_else(|| env::predecessor_account_id());
         let deposit = env::attached_deposit();
-        if deposit.as_yoctonear() > 0 {
-            Promise::new(env::predecessor_account_id()).transfer(deposit);
+        let min_balance = Self::min_storage_balance();
+        let mut refund = deposit.as_yoctonear();
+        if self.accounts.get(&account_id).is_none() && !Self::storage_is_registered(&account_id) {
+            assert!(
+                deposit.as_yoctonear() >= min_balance.as_yoctonear(),
+                "ERR_INSUFFICIENT_STORAGE_DEPOSIT"
+            );
+            Self::storage_register_account(&account_id);
+            refund -= min_balance.as_yoctonear();
+        }
+        if refund > 0 {
+            Promise::new(env::predecessor_account_id()).transfer(NearToken::from_yoctonear(refund));
         }
         StorageBalance {
-            total: NearToken::from_yoctonear(0),
+            total: min_balance,
             available: NearToken::from_yoctonear(0),
         }
     }
 
     /// Withdraw not supported (always zero available).
     #[payable]
-    pub fn storage_withdraw(&mut self, _amount: Option<U128>) -> StorageBalance {
-        panic!("Storage withdraw is not supported");
+    pub fn storage_withdraw(&mut self, amount: Option<U128>) -> StorageBalance {
+        near_sdk::assert_one_yocto();
+        let account_id = env::predecessor_account_id();
+        let min = Self::min_storage_balance();
+        if self.accounts.get(&account_id).is_some() {
+            env::panic_str("ERR_STORAGE_IN_USE");
+        }
+        if !Self::storage_is_registered(&account_id) {
+            return StorageBalance {
+                total: NearToken::from_yoctonear(0),
+                available: NearToken::from_yoctonear(0),
+            };
+        }
+        if let Some(amount) = amount {
+            assert_eq!(
+                amount.0,
+                min.as_yoctonear(),
+                "ERR_WITHDRAW_INCORRECT_AMOUNT"
+            );
+        }
+        Self::storage_take_registration(&account_id);
+        Promise::new(account_id.clone()).transfer(min);
+        StorageBalance {
+            total: NearToken::from_yoctonear(0),
+            available: NearToken::from_yoctonear(0),
+        }
     }
 }
 
@@ -402,21 +463,22 @@ impl StakingContract {
     fn internal_assert_receiver_storage(
         &mut self,
         receiver_id: &AccountId,
-        amount_shares: Balance,
+        _amount_shares: Balance,
     ) {
         if self.accounts.get(receiver_id).is_some() {
             return;
         }
-        // Use a conservative constant for required storage bytes.
-        let bytes = ACCOUNT_STORAGE_BYTES as u128;
-        let near_needed = env::storage_byte_cost().as_yoctonear() * bytes;
-        if self.total_staked_balance > 0 && self.total_stake_shares > 0 {
-            let required_shares = self.num_shares_from_staked_amount_rounded_up(near_needed);
-            assert!(
-                amount_shares >= required_shares,
-                "ERR_INSUFFICIENT_SHARES_FOR_STORAGE"
-            );
+        if Self::storage_take_registration(receiver_id) {
+            return;
         }
+        env::panic_str("ERR_STORAGE_NOT_REGISTERED");
+    }
+}
+
+#[cfg(test)]
+impl StakingContract {
+    pub(crate) fn test_register_account(&mut self, account_id: &AccountId) {
+        Self::storage_register_account(account_id);
     }
 }
 
@@ -425,6 +487,10 @@ mod tests {
     use near_contract_standards::fungible_token::receiver::FungibleTokenReceiver;
     use near_sdk::json_types::U64;
     use near_sdk::serde_json::json;
+    use near_sdk::test_utils::VMContextBuilder;
+    #[allow(deprecated)]
+    use near_sdk::test_utils::testing_env_with_promise_results;
+    use near_sdk::{NearToken, PromiseResult, testing_env};
 
     use crate::test_utils::tests::*;
     use crate::test_utils::*;
@@ -1003,6 +1069,7 @@ mod tests {
 
         // Bob stakes to have an account entry
         emulator.deposit_and_stake(bob(), ntoy(1));
+        emulator.contract.test_register_account(&charlie());
 
         emulator.update_context(bob(), 1);
         emulator.contract.ft_transfer(charlie(), U128(0)); // should panic ERR_ZERO_AMOUNT
@@ -1057,8 +1124,205 @@ mod tests {
 
         // Bob stakes 1 yocto, tries to transfer more
         emulator.deposit_and_stake(bob(), ntoy(1));
+        emulator.contract.test_register_account(&charlie());
 
         emulator.update_context(bob(), 1);
         emulator.contract.ft_transfer(charlie(), U128(ntoy(2))); // should panic ERR_INSUFFICIENT_SHARES
+    }
+
+    #[test]
+    #[should_panic(expected = "ERR_STORAGE_NOT_REGISTERED")]
+    fn test_ft_transfer_requires_storage_registration() {
+        let mut emulator = Emulator::new(
+            owner(),
+            "KuTCtARNzxZQ3YvXDeLjx83FDqxv2SdQTSbiq876zR7"
+                .parse()
+                .unwrap(),
+            zero_fee(),
+        );
+        emulator.deposit_and_stake(bob(), ntoy(10));
+        emulator.update_context(bob(), 1);
+        emulator.contract.ft_transfer(charlie(), U128(ntoy(1)));
+    }
+
+    #[test]
+    fn test_ft_resolve_transfer_refunds_unused_shares() {
+        let mut emulator = Emulator::new(
+            owner(),
+            "KuTCtARNzxZQ3YvXDeLjx83FDqxv2SdQTSbiq876zR7"
+                .parse()
+                .unwrap(),
+            zero_fee(),
+        );
+        emulator.deposit_and_stake(bob(), ntoy(1_000));
+        emulator.contract.test_register_account(&charlie());
+
+        let transfer_amount = ntoy(100);
+        let bob_before = emulator.contract.ft_balance_of(bob()).0;
+
+        emulator.update_context(bob(), 1);
+        emulator
+            .contract
+            .ft_transfer(charlie(), U128(transfer_amount));
+
+        let bob_after_transfer = emulator.contract.ft_balance_of(bob()).0;
+        let charlie_after_transfer = emulator.contract.ft_balance_of(charlie()).0;
+        assert_eq!(bob_after_transfer, bob_before - transfer_amount);
+        assert_eq!(charlie_after_transfer, transfer_amount);
+
+        let unused = transfer_amount / 2;
+        let callback_context = VMContextBuilder::new()
+            .current_account_id(staking())
+            .predecessor_account_id(staking())
+            .signer_account_id(staking())
+            .attached_deposit(NearToken::from_yoctonear(0))
+            .account_balance(NearToken::from_yoctonear(emulator.amount))
+            .account_locked_balance(NearToken::from_yoctonear(emulator.locked_amount))
+            .epoch_height(emulator.epoch_height)
+            .block_height(emulator.block_index)
+            .block_timestamp(emulator.block_timestamp)
+            .build();
+        #[allow(deprecated)]
+        testing_env_with_promise_results(
+            callback_context,
+            PromiseResult::Successful(near_sdk::serde_json::to_vec(&U128(unused)).unwrap()),
+        );
+
+        let refund = emulator
+            .contract
+            .ft_resolve_transfer(bob(), charlie(), U128(transfer_amount));
+        assert_eq!(refund.0, unused);
+
+        let bob_after_refund = emulator.contract.ft_balance_of(bob()).0;
+        let charlie_after_refund = emulator.contract.ft_balance_of(charlie()).0;
+        assert_eq!(bob_after_refund, bob_after_transfer + unused);
+        assert_eq!(charlie_after_refund, charlie_after_transfer - unused);
+    }
+
+    #[test]
+    #[should_panic(expected = "Denominator must be a positive number")]
+    fn test_new_panics_for_invalid_burn_fee_denominator() {
+        let context = VMContextBuilder::new()
+            .current_account_id(staking())
+            .predecessor_account_id(owner())
+            .signer_account_id(owner())
+            .account_balance(NearToken::from_yoctonear(ntoy(1_000)))
+            .build();
+        testing_env!(context);
+        StakingContract::new(
+            owner(),
+            "KuTCtARNzxZQ3YvXDeLjx83FDqxv2SdQTSbiq876zR7"
+                .parse()
+                .unwrap(),
+            zero_fee(),
+            Ratio {
+                numerator: 1,
+                denominator: 0,
+            },
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "The reward fee must be less or equal to 1")]
+    fn test_new_panics_for_burn_fee_greater_than_one() {
+        let context = VMContextBuilder::new()
+            .current_account_id(staking())
+            .predecessor_account_id(owner())
+            .signer_account_id(owner())
+            .account_balance(NearToken::from_yoctonear(ntoy(1_000)))
+            .build();
+        testing_env!(context);
+        StakingContract::new(
+            owner(),
+            "KuTCtARNzxZQ3YvXDeLjx83FDqxv2SdQTSbiq876zR7"
+                .parse()
+                .unwrap(),
+            zero_fee(),
+            Ratio {
+                numerator: 2,
+                denominator: 1,
+            },
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "ERR_TOO_MANY_ACTIVE_FARMS")]
+    fn test_active_farm_cap_enforced() {
+        let mut emulator = Emulator::new(
+            owner(),
+            "KuTCtARNzxZQ3YvXDeLjx83FDqxv2SdQTSbiq876zR7"
+                .parse()
+                .unwrap(),
+            zero_fee(),
+        );
+        emulator.update_context(owner(), 0);
+        emulator.contract.add_authorized_farm_token(&bob());
+
+        for i in 0..MAX_NUM_ACTIVE_FARMS {
+            emulator.update_context(bob(), 0);
+            emulator.contract.ft_on_transfer(
+                owner(),
+                U128(ntoy(100)),
+                json!({
+                    "name": format!("farm-{i}"),
+                    "start_date": U64(0),
+                    "end_date": U64(ONE_EPOCH_TS * 4),
+                })
+                .to_string(),
+            );
+        }
+
+        emulator.update_context(bob(), 0);
+        emulator.contract.ft_on_transfer(
+            owner(),
+            U128(ntoy(100)),
+            json!({
+                "name": "overflow",
+                "start_date": U64(0),
+                "end_date": U64(ONE_EPOCH_TS * 4),
+            })
+            .to_string(),
+        );
+    }
+
+    #[test]
+    fn test_storage_deposit_and_withdraw() {
+        let mut emulator = Emulator::new(
+            owner(),
+            "KuTCtARNzxZQ3YvXDeLjx83FDqxv2SdQTSbiq876zR7"
+                .parse()
+                .unwrap(),
+            zero_fee(),
+        );
+        let min = emulator.contract.storage_balance_bounds().min;
+
+        emulator.update_context(charlie(), min.as_yoctonear() + ntoy(1));
+        let sb = emulator.contract.storage_deposit(Some(charlie()), None);
+        assert_eq!(sb.total, min);
+        assert!(emulator.contract.storage_balance_of(charlie()).is_some());
+
+        emulator.update_context(charlie(), 1);
+        let sb = emulator.contract.storage_withdraw(None);
+        assert_eq!(sb.total.as_yoctonear(), 0);
+        assert!(emulator.contract.storage_balance_of(charlie()).is_none());
+    }
+
+    #[test]
+    #[should_panic(expected = "ERR_STORAGE_IN_USE")]
+    fn test_storage_withdraw_fails_when_account_active() {
+        let mut emulator = Emulator::new(
+            owner(),
+            "KuTCtARNzxZQ3YvXDeLjx83FDqxv2SdQTSbiq876zR7"
+                .parse()
+                .unwrap(),
+            zero_fee(),
+        );
+        let min = emulator.contract.storage_balance_bounds().min;
+        emulator.update_context(charlie(), min.as_yoctonear() + ntoy(1));
+        emulator.contract.storage_deposit(Some(charlie()), None);
+        emulator.deposit_and_stake(charlie(), ntoy(10));
+
+        emulator.update_context(charlie(), 1);
+        emulator.contract.storage_withdraw(None);
     }
 }

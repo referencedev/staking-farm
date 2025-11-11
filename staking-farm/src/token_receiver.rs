@@ -53,7 +53,7 @@ impl FungibleTokenReceiver for StakingContract {
             );
         } else {
             assert!(
-                self.active_farms.len() <= MAX_NUM_ACTIVE_FARMS,
+                self.active_farms.len() < MAX_NUM_ACTIVE_FARMS,
                 "ERR_TOO_MANY_ACTIVE_FARMS"
             );
             self.internal_deposit_farm_tokens(

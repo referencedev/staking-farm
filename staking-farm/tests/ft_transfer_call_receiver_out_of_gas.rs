@@ -1,5 +1,5 @@
 use near_workspaces::types::{Gas, NearToken};
-use near_workspaces::{sandbox, Account, AccountId, Contract, Worker};
+use near_workspaces::{Account, AccountId, Contract, Worker, sandbox};
 use serde_json::json;
 
 const STAKING_POOL_ACCOUNT_ID: &str = "pool";
@@ -12,7 +12,11 @@ struct Ctx {
     pool: Contract,
 }
 
-async fn init_pool(pool_initial_balance: NearToken, reward_ratio: u32, burn_ratio: u32) -> anyhow::Result<Ctx> {
+async fn init_pool(
+    pool_initial_balance: NearToken,
+    reward_ratio: u32,
+    burn_ratio: u32,
+) -> anyhow::Result<Ctx> {
     let worker = sandbox().await?;
     let owner = worker.root_account()?;
 
@@ -28,8 +32,7 @@ async fn init_pool(pool_initial_balance: NearToken, reward_ratio: u32, burn_rati
 
     let reward_ratio = json!({"numerator": reward_ratio, "denominator": 10});
     let burn_ratio = json!({"numerator": burn_ratio, "denominator": 10});
-    pool
-        .call("new")
+    pool.call("new")
         .args_json(json!({
             "owner_id": owner.id(),
             "stake_public_key": STAKING_KEY,
@@ -41,10 +44,18 @@ async fn init_pool(pool_initial_balance: NearToken, reward_ratio: u32, burn_rati
         .await?
         .into_result()?;
 
-    Ok(Ctx { worker, owner, pool })
+    Ok(Ctx {
+        worker,
+        owner,
+        pool,
+    })
 }
 
-async fn create_user_and_stake(ctx: &Ctx, name: &str, stake_amount: NearToken) -> anyhow::Result<Account> {
+async fn create_user_and_stake(
+    ctx: &Ctx,
+    name: &str,
+    stake_amount: NearToken,
+) -> anyhow::Result<Account> {
     let user = ctx
         .owner
         .create_subaccount(name)
@@ -53,8 +64,7 @@ async fn create_user_and_stake(ctx: &Ctx, name: &str, stake_amount: NearToken) -
         .await?
         .into_result()?;
 
-    user
-        .call(ctx.pool.id(), "deposit_and_stake")
+    user.call(ctx.pool.id(), "deposit_and_stake")
         .deposit(stake_amount)
         .gas(Gas::from_tgas(200))
         .transact()
@@ -81,7 +91,10 @@ async fn test_ft_transfer_call_receiver_out_of_gas() -> anyhow::Result<()> {
         .transact()
         .await?
         .into_result()?;
-    let mock_receiver = mock_receiver.deploy(&mock_receiver_wasm).await?.into_result()?;
+    let mock_receiver = mock_receiver
+        .deploy(&mock_receiver_wasm)
+        .await?
+        .into_result()?;
     // Initialize and set mode to burn_gas
     mock_receiver
         .call("new")
@@ -152,7 +165,14 @@ async fn test_ft_transfer_call_receiver_out_of_gas() -> anyhow::Result<()> {
         .as_str()
         .unwrap()
         .parse()?;
-    assert_eq!(user1_after, user1_shares - transfer_amount, "User1 shares should decrease");
-    assert_eq!(receiver_after, transfer_amount, "Receiver should get all transferred shares");
+    assert_eq!(
+        user1_after,
+        user1_shares - transfer_amount,
+        "User1 shares should decrease"
+    );
+    assert_eq!(
+        receiver_after, transfer_amount,
+        "Receiver should get all transferred shares"
+    );
     Ok(())
 }

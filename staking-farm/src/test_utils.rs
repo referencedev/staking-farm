@@ -95,7 +95,7 @@ pub mod tests {
                 reward_fee_fraction,
                 Ratio {
                     numerator: 0,
-                    denominator: 0,
+                    denominator: 1,
                 },
             );
             let last_total_staked_balance = contract.total_staked_balance;
