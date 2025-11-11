@@ -444,6 +444,8 @@ impl StakingContract {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
     use near_contract_standards::fungible_token::receiver::FungibleTokenReceiver;
     use near_sdk::json_types::U64;
     use near_sdk::serde_json::json;
@@ -452,6 +454,7 @@ mod tests {
     use near_sdk::test_utils::testing_env_with_promise_results;
     use near_sdk::{NearToken, PromiseResult, testing_env};
 
+    use crate::internal::MIN_BURN_AMOUNT;
     use crate::test_utils::tests::*;
     use crate::test_utils::*;
 
@@ -1288,5 +1291,477 @@ mod tests {
 
         emulator.update_context(charlie(), 1);
         emulator.contract.storage_withdraw(None);
+    }
+
+    #[test]
+    fn test_unstake_burn_and_burn_flow() {
+        let mut emulator = Emulator::new_with_fees(
+            owner(),
+            "KuTCtARNzxZQ3YvXDeLjx83FDqxv2SdQTSbiq876zR7"
+                .parse()
+                .unwrap(),
+            zero_fee(),
+            Ratio {
+                numerator: 1,
+                denominator: 2,
+            },
+        );
+        emulator.deposit_and_stake(bob(), ntoy(1_000));
+        emulator.skip_epochs(1);
+        emulator.locked_amount += ntoy(10);
+        emulator.update_context(bob(), 0);
+        emulator.contract.ping();
+        assert!(emulator.contract.total_burn_shares > 0);
+
+        emulator.update_context(owner(), 0);
+        emulator.contract.unstake_burn();
+        let burn_account_id: AccountId = crate::internal::ZERO_ADDRESS.parse().unwrap();
+        let mut burn_account = emulator.contract.internal_get_account(&burn_account_id);
+        assert!(burn_account.unstaked > 0);
+        assert_eq!(burn_account.stake_shares, 0);
+        assert_eq!(emulator.contract.total_burn_shares, 0);
+
+        burn_account.unstaked = MIN_BURN_AMOUNT + 1;
+        burn_account.unstaked_available_epoch_height = emulator.epoch_height;
+        emulator
+            .contract
+            .internal_save_account(&burn_account_id, &burn_account);
+        emulator.amount = (MIN_BURN_AMOUNT + ntoy(1)) * 10;
+        emulator.update_context(owner(), 0);
+        emulator.contract.burn();
+        let burn_after = emulator.contract.internal_get_account(&burn_account_id);
+        assert_eq!(burn_after.unstaked, 0);
+    }
+
+    #[test]
+    fn test_callback_post_withdraw_reward_refunds_on_failure() {
+        let mut emulator = Emulator::new(
+            owner(),
+            "KuTCtARNzxZQ3YvXDeLjx83FDqxv2SdQTSbiq876zR7"
+                .parse()
+                .unwrap(),
+            zero_fee(),
+        );
+        let token = bob();
+        let sender = alice();
+        let ctx = VMContextBuilder::new()
+            .current_account_id(staking())
+            .predecessor_account_id(staking())
+            .signer_account_id(staking())
+            .attached_deposit(NearToken::from_yoctonear(0))
+            .account_balance(NearToken::from_yoctonear(emulator.amount))
+            .account_locked_balance(NearToken::from_yoctonear(emulator.locked_amount))
+            .epoch_height(emulator.epoch_height)
+            .block_height(emulator.block_index)
+            .block_timestamp(emulator.block_timestamp)
+            .build();
+        #[allow(deprecated)]
+        testing_env_with_promise_results(ctx, PromiseResult::Failed);
+        emulator.contract.callback_post_withdraw_reward(
+            token.clone(),
+            sender.clone(),
+            U128(ntoy(5)),
+        );
+        let account = emulator.contract.internal_get_account(&sender);
+        assert_eq!(*account.amounts.get(&token).unwrap(), ntoy(5));
+    }
+
+    #[test]
+    fn test_callback_post_withdraw_reward_success_no_refund() {
+        let mut emulator = Emulator::new(
+            owner(),
+            "KuTCtARNzxZQ3YvXDeLjx83FDqxv2SdQTSbiq876zR7"
+                .parse()
+                .unwrap(),
+            zero_fee(),
+        );
+        let token = bob();
+        let sender = alice();
+        let ctx = VMContextBuilder::new()
+            .current_account_id(staking())
+            .predecessor_account_id(staking())
+            .signer_account_id(staking())
+            .attached_deposit(NearToken::from_yoctonear(0))
+            .account_balance(NearToken::from_yoctonear(emulator.amount))
+            .account_locked_balance(NearToken::from_yoctonear(emulator.locked_amount))
+            .epoch_height(emulator.epoch_height)
+            .block_height(emulator.block_index)
+            .block_timestamp(emulator.block_timestamp)
+            .build();
+        #[allow(deprecated)]
+        testing_env_with_promise_results(ctx, PromiseResult::Successful(vec![]));
+        emulator.contract.callback_post_withdraw_reward(
+            token.clone(),
+            sender.clone(),
+            U128(ntoy(5)),
+        );
+        let account = emulator.contract.internal_get_account(&sender);
+        assert!(account.amounts.get(&token).is_none());
+    }
+
+    #[test]
+    fn test_callback_post_get_owner_claims_for_delegator() {
+        let mut emulator = Emulator::new(
+            owner(),
+            "KuTCtARNzxZQ3YvXDeLjx83FDqxv2SdQTSbiq876zR7"
+                .parse()
+                .unwrap(),
+            zero_fee(),
+        );
+        let token = bob();
+        let delegator = charlie();
+        let receiver = alice();
+        let mut delegator_account = emulator.contract.internal_get_account(&delegator);
+        delegator_account.amounts.insert(token.clone(), ntoy(7));
+        emulator
+            .contract
+            .internal_save_account(&delegator, &delegator_account);
+
+        let ctx = VMContextBuilder::new()
+            .current_account_id(staking())
+            .predecessor_account_id(staking())
+            .signer_account_id(staking())
+            .account_balance(NearToken::from_yoctonear(emulator.amount))
+            .account_locked_balance(NearToken::from_yoctonear(emulator.locked_amount))
+            .epoch_height(emulator.epoch_height)
+            .block_height(emulator.block_index)
+            .block_timestamp(emulator.block_timestamp)
+            .build();
+        #[allow(deprecated)]
+        testing_env_with_promise_results(
+            ctx,
+            PromiseResult::Successful(near_sdk::serde_json::to_vec(&receiver).unwrap()),
+        );
+        let _ = emulator.contract.callback_post_get_owner(
+            token.clone(),
+            delegator.clone(),
+            receiver.clone(),
+        );
+        let updated_delegator = emulator.contract.internal_get_account(&delegator);
+        assert_eq!(
+            updated_delegator.amounts.get(&token).cloned().unwrap_or(0),
+            0
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "Caller is not an owner")]
+    fn test_callback_post_get_owner_rejects_wrong_owner() {
+        let mut emulator = Emulator::new(
+            owner(),
+            "KuTCtARNzxZQ3YvXDeLjx83FDqxv2SdQTSbiq876zR7"
+                .parse()
+                .unwrap(),
+            zero_fee(),
+        );
+        let token = bob();
+        let delegator = charlie();
+        let ctx = VMContextBuilder::new()
+            .current_account_id(staking())
+            .predecessor_account_id(staking())
+            .signer_account_id(staking())
+            .account_balance(NearToken::from_yoctonear(emulator.amount))
+            .account_locked_balance(NearToken::from_yoctonear(emulator.locked_amount))
+            .epoch_height(emulator.epoch_height)
+            .block_height(emulator.block_index)
+            .block_timestamp(emulator.block_timestamp)
+            .build();
+        #[allow(deprecated)]
+        testing_env_with_promise_results(
+            ctx,
+            PromiseResult::Successful(near_sdk::serde_json::to_vec(&delegator).unwrap()),
+        );
+        let _ = emulator
+            .contract
+            .callback_post_get_owner(token, delegator.clone(), alice());
+    }
+
+    #[test]
+    fn test_authorized_user_and_token_management() {
+        let mut emulator = Emulator::new(
+            owner(),
+            "KuTCtARNzxZQ3YvXDeLjx83FDqxv2SdQTSbiq876zR7"
+                .parse()
+                .unwrap(),
+            zero_fee(),
+        );
+        emulator.update_context(owner(), 0);
+        emulator.contract.add_authorized_user(alice());
+        assert!(emulator.contract.get_authorized_users().contains(&alice()));
+        emulator.contract.remove_authorized_user(alice());
+        assert!(!emulator.contract.get_authorized_users().contains(&alice()));
+
+        emulator.contract.add_authorized_farm_token(&bob());
+        assert!(
+            emulator
+                .contract
+                .get_authorized_farm_tokens()
+                .contains(&bob())
+        );
+        emulator.contract.remove_authorized_farm_token(&bob());
+        assert!(
+            !emulator
+                .contract
+                .get_authorized_farm_tokens()
+                .contains(&bob())
+        );
+    }
+
+    #[test]
+    fn test_get_accounts_pagination() {
+        let mut emulator = Emulator::new(
+            owner(),
+            "KuTCtARNzxZQ3YvXDeLjx83FDqxv2SdQTSbiq876zR7"
+                .parse()
+                .unwrap(),
+            zero_fee(),
+        );
+        emulator.deposit_and_stake(bob(), ntoy(10));
+        emulator.deposit_and_stake(charlie(), ntoy(20));
+
+        let first_page = emulator.contract.get_accounts(0, 1);
+        let second_page = emulator.contract.get_accounts(1, 1);
+        assert_eq!(first_page.len(), 1);
+        assert_eq!(second_page.len(), 1);
+        let ids: BTreeSet<_> = first_page
+            .into_iter()
+            .chain(second_page.into_iter())
+            .map(|acc| acc.account_id)
+            .collect();
+        assert_eq!(ids, BTreeSet::from([bob(), charlie()]));
+    }
+
+    #[test]
+    fn test_get_farms_pagination() {
+        let mut emulator = Emulator::new(
+            owner(),
+            "KuTCtARNzxZQ3YvXDeLjx83FDqxv2SdQTSbiq876zR7"
+                .parse()
+                .unwrap(),
+            zero_fee(),
+        );
+        emulator.update_context(owner(), 0);
+        emulator.contract.add_authorized_farm_token(&bob());
+
+        emulator.update_context(bob(), 0);
+        emulator.contract.ft_on_transfer(
+            owner(),
+            U128(ntoy(100)),
+            json!({
+                "name": "farm-1",
+                "start_date": U64(ONE_EPOCH_TS * 5),
+                "end_date": U64(ONE_EPOCH_TS * 10),
+            })
+            .to_string(),
+        );
+        emulator.contract.ft_on_transfer(
+            owner(),
+            U128(ntoy(200)),
+            json!({
+                "name": "farm-2",
+                "start_date": U64(ONE_EPOCH_TS * 6),
+                "end_date": U64(ONE_EPOCH_TS * 11),
+            })
+            .to_string(),
+        );
+
+        let page = emulator.contract.get_farms(1, 1);
+        assert_eq!(page.len(), 1);
+        assert_eq!(page[0].name, "farm-2");
+    }
+
+    #[test]
+    fn test_set_owner_id_updates_owner() {
+        let mut emulator = Emulator::new(
+            owner(),
+            "KuTCtARNzxZQ3YvXDeLjx83FDqxv2SdQTSbiq876zR7"
+                .parse()
+                .unwrap(),
+            zero_fee(),
+        );
+
+        emulator.update_context(owner(), 0);
+        StakingContract::set_owner_id(&alice());
+        assert_eq!(emulator.contract.get_owner_id(), alice());
+
+        emulator.update_context(alice(), 0);
+        StakingContract::set_owner_id(&owner());
+        assert_eq!(emulator.contract.get_owner_id(), owner());
+    }
+
+    #[test]
+    fn test_pause_and_resume_staking() {
+        let mut emulator = Emulator::new(
+            owner(),
+            "KuTCtARNzxZQ3YvXDeLjx83FDqxv2SdQTSbiq876zR7"
+                .parse()
+                .unwrap(),
+            zero_fee(),
+        );
+
+        emulator.update_context(owner(), 0);
+        emulator.contract.pause_staking();
+        assert!(emulator.contract.is_staking_paused());
+
+        emulator.contract.resume_staking();
+        assert!(!emulator.contract.is_staking_paused());
+    }
+
+    #[test]
+    #[should_panic(expected = "The staking is already paused")]
+    fn test_pause_staking_twice_panics() {
+        let mut emulator = Emulator::new(
+            owner(),
+            "KuTCtARNzxZQ3YvXDeLjx83FDqxv2SdQTSbiq876zR7"
+                .parse()
+                .unwrap(),
+            zero_fee(),
+        );
+        emulator.update_context(owner(), 0);
+        emulator.contract.pause_staking();
+        emulator.contract.pause_staking();
+    }
+
+    #[test]
+    #[should_panic(expected = "The staking is not paused")]
+    fn test_resume_without_pause_panics() {
+        let mut emulator = Emulator::new(
+            owner(),
+            "KuTCtARNzxZQ3YvXDeLjx83FDqxv2SdQTSbiq876zR7"
+                .parse()
+                .unwrap(),
+            zero_fee(),
+        );
+        emulator.update_context(owner(), 0);
+        emulator.contract.resume_staking();
+    }
+
+    #[test]
+    #[should_panic(expected = "Can only be called by staking pool factory")]
+    fn test_decrease_burn_fee_fraction_requires_factory() {
+        let mut emulator = Emulator::new(
+            owner(),
+            "KuTCtARNzxZQ3YvXDeLjx83FDqxv2SdQTSbiq876zR7"
+                .parse()
+                .unwrap(),
+            zero_fee(),
+        );
+        emulator.update_context(owner(), 0);
+        emulator.contract.decrease_burn_fee_fraction(Ratio {
+            numerator: 1,
+            denominator: 10,
+        });
+    }
+
+    #[test]
+    fn test_decrease_burn_fee_fraction_updates_value() {
+        let mut emulator = Emulator::new(
+            owner(),
+            "KuTCtARNzxZQ3YvXDeLjx83FDqxv2SdQTSbiq876zR7"
+                .parse()
+                .unwrap(),
+            zero_fee(),
+        );
+        emulator.contract.burn_fee_fraction = Ratio {
+            numerator: 5,
+            denominator: 10,
+        };
+        let new_fee = Ratio {
+            numerator: 1,
+            denominator: 10,
+        };
+        emulator.update_context(factory(), 0);
+        emulator
+            .contract
+            .decrease_burn_fee_fraction(new_fee.clone());
+        assert_eq!(
+            emulator.contract.get_pool_summary().burn_fee_fraction,
+            new_fee
+        );
+    }
+
+    #[test]
+    fn test_ft_on_transfer_updates_existing_farm_before_start() {
+        let mut emulator = Emulator::new(
+            owner(),
+            "KuTCtARNzxZQ3YvXDeLjx83FDqxv2SdQTSbiq876zR7"
+                .parse()
+                .unwrap(),
+            zero_fee(),
+        );
+        emulator.update_context(owner(), 0);
+        emulator.contract.add_authorized_farm_token(&bob());
+
+        let start = U64(ONE_EPOCH_TS * 5);
+        let end = U64(ONE_EPOCH_TS * 10);
+        emulator.update_context(bob(), 0);
+        emulator.contract.ft_on_transfer(
+            owner(),
+            U128(ntoy(1_000)),
+            json!({
+                "name": "farm",
+                "start_date": start,
+                "end_date": end
+            })
+            .to_string(),
+        );
+
+        let mut farm = emulator.contract.get_farm(0);
+        assert_eq!(farm.amount.0, ntoy(1_000));
+        assert_eq!(farm.start_date, start);
+        assert_eq!(farm.end_date, end);
+
+        let new_start = U64(ONE_EPOCH_TS * 6);
+        let new_end = U64(ONE_EPOCH_TS * 12);
+        emulator.contract.ft_on_transfer(
+            owner(),
+            U128(ntoy(500)),
+            json!({
+                "farm_id": 0,
+                "start_date": new_start,
+                "end_date": new_end
+            })
+            .to_string(),
+        );
+
+        farm = emulator.contract.get_farm(0);
+        assert_eq!(farm.amount.0, ntoy(1_500));
+        assert_eq!(farm.start_date, new_start);
+        assert_eq!(farm.end_date, new_end);
+    }
+
+    #[test]
+    fn test_pool_summary_and_account_views() {
+        let mut emulator = Emulator::new(
+            owner(),
+            "KuTCtARNzxZQ3YvXDeLjx83FDqxv2SdQTSbiq876zR7"
+                .parse()
+                .unwrap(),
+            zero_fee(),
+        );
+        emulator.deposit_and_stake(bob(), ntoy(1_000));
+
+        let summary = emulator.contract.get_pool_summary();
+        assert_eq!(summary.owner, owner());
+        assert_eq!(
+            summary.total_staked_balance.0,
+            emulator.contract.total_staked_balance
+        );
+        assert_eq!(summary.reward_fee_fraction, zero_fee());
+        assert_eq!(summary.next_reward_fee_fraction, zero_fee());
+        assert!(summary.farms.is_empty());
+
+        let account = emulator.contract.get_account(bob());
+        assert_eq!(account.account_id, bob());
+        assert!(account.unstaked_balance.0 < ntoy(1));
+        assert_eq!(
+            account.staked_balance.0,
+            emulator.contract.get_account_staked_balance(bob()).0
+        );
+        assert!(account.can_withdraw);
+
+        let accounts = emulator.contract.get_accounts(0, 10);
+        assert_eq!(accounts.len(), 1);
+        assert_eq!(accounts[0].account_id, bob());
     }
 }

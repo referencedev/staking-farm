@@ -18,6 +18,9 @@ pub fn owner() -> AccountId {
 pub fn charlie() -> AccountId {
     "charlie".parse().unwrap()
 }
+pub fn factory() -> AccountId {
+    "factory".parse().unwrap()
+}
 
 pub fn ntoy(near_amount: Balance) -> Balance {
     near_amount * 10u128.pow(24)
@@ -84,12 +87,7 @@ pub mod tests {
             stake_public_key: PublicKey,
             reward_fee_fraction: Ratio,
         ) -> Self {
-            let context = VMContextBuilder::new()
-                .current_account_id(owner.clone())
-                .account_balance(NearToken::from_yoctonear(ntoy(30)))
-                .build();
-            testing_env!(context.clone());
-            let contract = StakingContract::new(
+            Self::new_with_fees(
                 owner,
                 stake_public_key,
                 reward_fee_fraction,
@@ -97,6 +95,27 @@ pub mod tests {
                     numerator: 0,
                     denominator: 1,
                 },
+            )
+        }
+
+        pub fn new_with_fees(
+            owner: AccountId,
+            stake_public_key: PublicKey,
+            reward_fee_fraction: Ratio,
+            burn_fee_fraction: Ratio,
+        ) -> Self {
+            let context = VMContextBuilder::new()
+                .current_account_id(owner.clone())
+                .predecessor_account_id(factory())
+                .signer_account_id(owner.clone())
+                .account_balance(NearToken::from_yoctonear(ntoy(30)))
+                .build();
+            testing_env!(context.clone());
+            let contract = StakingContract::new(
+                owner,
+                stake_public_key,
+                reward_fee_fraction,
+                burn_fee_fraction,
             );
             let last_total_staked_balance = contract.total_staked_balance;
             let last_total_stake_shares = contract.total_stake_shares;
