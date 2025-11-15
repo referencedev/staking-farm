@@ -357,34 +357,11 @@ use near_contract_standards::storage_management::{StorageBalance, StorageBalance
 
 #[near_bindgen]
 impl StakingContract {
-    fn storage_registration_key(account_id: &AccountId) -> Vec<u8> {
-        let mut key = REGISTERED_ACCOUNT_PREFIX.to_vec();
-        key.extend(account_id.as_bytes());
-        key
-    }
-
-    fn storage_is_registered(account_id: &AccountId) -> bool {
-        env::storage_has_key(&Self::storage_registration_key(account_id))
-    }
-
-    fn storage_register_account(account_id: &AccountId) {
-        env::storage_write(&Self::storage_registration_key(account_id), &[]);
-    }
-
-    fn storage_take_registration(account_id: &AccountId) -> bool {
-        env::storage_remove(&Self::storage_registration_key(account_id))
-    }
-
-    fn min_storage_balance() -> NearToken {
-        let byte_cost = env::storage_byte_cost().as_yoctonear();
-        NearToken::from_yoctonear(byte_cost * ACCOUNT_STORAGE_BYTES as u128)
-    }
-
     /// Returns the min and max storage balance bounds. Max is None for FTs.
     pub fn storage_balance_bounds(&self) -> StorageBalanceBounds {
         StorageBalanceBounds {
             min: Self::min_storage_balance(),
-            max: None,
+            max: Some(Self::min_storage_balance()),
         }
     }
 
@@ -427,7 +404,7 @@ impl StakingContract {
         }
     }
 
-    /// Withdraw not supported (always zero available).
+    /// Withdraw storage deposit when the balance of the user is 0.
     #[payable]
     pub fn storage_withdraw(&mut self, amount: Option<U128>) -> StorageBalance {
         near_sdk::assert_one_yocto();
@@ -455,23 +432,6 @@ impl StakingContract {
             total: NearToken::from_yoctonear(0),
             available: NearToken::from_yoctonear(0),
         }
-    }
-}
-
-impl StakingContract {
-    /// If receiver doesn't yet have an account entry, ensure the transferred shares are enough to cover storage.
-    fn internal_assert_receiver_storage(
-        &mut self,
-        receiver_id: &AccountId,
-        _amount_shares: Balance,
-    ) {
-        if self.accounts.get(receiver_id).is_some() {
-            return;
-        }
-        if Self::storage_take_registration(receiver_id) {
-            return;
-        }
-        env::panic_str("ERR_STORAGE_NOT_REGISTERED");
     }
 }
 

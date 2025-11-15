@@ -70,14 +70,14 @@ This contract exposes staked shares as a standard NEAR FT (NEP-141), so users ca
 
 ### Storage (NEP-145)
 
-Explicit storage registration is not required. The transfered stake shares must be sufficient to cover the receiver’s storage; the contract enforces this by requiring a minimum number of shares for new accounts.
+Explicit storage registration is required when transferring to the new user who hasn't staked with given contract. 
 
 The storage interface is provided for compatibility with wallets/dapps:
 
-- `storage_balance_bounds` returns 0 as min
-- `storage_balance_of` returns zeroed values
-- `storage_deposit` refunds any attached deposit back to the predecessor account
-- `storage_withdraw` returns 0
+- `storage_balance_bounds` returns amount required to cover Account storage
+- `storage_balance_of` returns either amount for registered storage or 0
+- `storage_deposit` records storage payment but doesn't create Account
+- `storage_withdraw` refunds storage if Account doesn't exist anymore
 
 ### Transfer shares
 
