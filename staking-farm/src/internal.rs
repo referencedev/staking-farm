@@ -409,7 +409,7 @@ impl StakingContract {
 
     ///
     /// Internal methods to work with storage registration.
-    /// 
+    ///
 
     pub(crate) fn storage_registration_key(account_id: &AccountId) -> Vec<u8> {
         let mut key = REGISTERED_ACCOUNT_PREFIX.to_vec();
@@ -450,5 +450,4 @@ impl StakingContract {
         }
         env::panic_str("ERR_STORAGE_NOT_REGISTERED");
     }
-
 }

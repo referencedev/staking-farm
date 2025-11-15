@@ -4,3 +4,4 @@ target/
 res/staking_farm_local.wasm
 res/staking_factory_local.wasm
 .DS_Store
+coverage/

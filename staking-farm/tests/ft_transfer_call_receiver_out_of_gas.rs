@@ -1,5 +1,5 @@
 use near_workspaces::types::{Gas, NearToken};
-use near_workspaces::{Account, AccountId, Contract, Worker, sandbox};
+use near_workspaces::{Account, Contract, sandbox};
 use serde_json::json;
 
 const STAKING_POOL_ACCOUNT_ID: &str = "pool";
@@ -7,7 +7,6 @@ const STAKING_KEY: &str = "KuTCtARNzxZQ3YvXDeLjx83FDqxv2SdQTSbiq876zR7";
 const STAKING_FARM_WASM: &str = "../target/near/staking_farm/staking_farm.wasm";
 
 struct Ctx {
-    worker: Worker<near_workspaces::network::Sandbox>,
     owner: Account,
     pool: Contract,
 }
@@ -44,11 +43,7 @@ async fn init_pool(
         .await?
         .into_result()?;
 
-    Ok(Ctx {
-        worker,
-        owner,
-        pool,
-    })
+    Ok(Ctx { owner, pool })
 }
 
 async fn create_user_and_stake(
@@ -103,12 +98,12 @@ async fn test_ft_transfer_call_receiver_out_of_gas() -> anyhow::Result<()> {
         .await?
         .into_result()?;
 
-    // Register mock receiver for FT shares (no-op but standard API)
+    // Register mock receiver for FT shares
     let _ = ctx
         .owner
         .call(ctx.pool.id(), "storage_deposit")
         .args_json(json!({ "account_id": mock_receiver.id(), "registration_only": true }))
-        .deposit(NearToken::from_millinear(1))
+        .deposit(NearToken::from_near(1))
         .gas(Gas::from_tgas(50))
         .transact()
         .await?;

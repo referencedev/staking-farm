@@ -1,3 +1,4 @@
+use anyhow::Context;
 use near_workspaces::types::{Gas, NearToken};
 use near_workspaces::{Account, AccountId, Contract, Worker};
 use serde_json::json;
@@ -6,9 +7,12 @@ const STAKING_POOL_ACCOUNT_ID: &str = "pool";
 const STAKING_KEY: &str = "KuTCtARNzxZQ3YvXDeLjx83FDqxv2SdQTSbiq876zR7";
 const ONE_SEC_IN_NS: u64 = 1_000_000_000;
 const WHITELIST_ACCOUNT_ID: &str = "whitelist";
+const VERSION_KEY: &[u8] = b"VERSION";
+const LEGACY_VERSION: &str = "staking-farm:1.0.0";
 
 // WASM file paths (built with `cargo near build non-reproducible-wasm`)
 const STAKING_FARM_WASM: &str = "../target/near/staking_farm/staking_farm.wasm";
+const STAKING_FACTORY_WASM: &str = "../res/staking_factory_local.wasm";
 const TEST_TOKEN_WASM: &str = "../target/near/test_token/test_token.wasm";
 const WHITELIST_WASM: &str = "../target/near/whitelist/whitelist.wasm";
 
@@ -793,6 +797,177 @@ async fn test_ft_transfer_call_insufficient_gas() -> anyhow::Result<()> {
         u2_after, u2_before,
         "Receiver balance should remain unchanged"
     );
+
+    Ok(())
+}
+
+/// End-to-end test covering the owner-driven contract upgrade path via the factory
+#[tokio::test]
+async fn test_contract_upgrade_flow() -> anyhow::Result<()> {
+    let worker = near_workspaces::sandbox().await?;
+    let root = worker.root_account()?;
+
+    let staking_wasm = std::fs::read(STAKING_FARM_WASM)?;
+    let factory_wasm = std::fs::read(STAKING_FACTORY_WASM)?;
+
+    let owner = root
+        .create_subaccount("upgradeowner")
+        .initial_balance(NearToken::from_near(1_000))
+        .transact()
+        .await
+        .context("create upgradeowner transact")?
+        .into_result()
+        .context("create upgradeowner result")?;
+
+    let whitelist = root
+        .create_subaccount("upgradewhitelist")
+        .initial_balance(NearToken::from_near(10))
+        .transact()
+        .await
+        .context("create whitelist transact")?
+        .into_result()
+        .context("create whitelist result")?;
+
+    // Deploy factory contract and initialize it with itself as owner so it can approve new code.
+    let factory = root
+        .create_subaccount("upgradefactory")
+        .initial_balance(NearToken::from_near(1_000))
+        .transact()
+        .await
+        .context("create factory account transact")?
+        .into_result()
+        .context("create factory account result")?;
+    let factory = factory
+        .deploy(&factory_wasm)
+        .await
+        .context("deploy factory wasm")?
+        .into_result()
+        .context("deploy factory result")?;
+    factory
+        .call("new")
+        .args_json(json!({
+            "owner_id": factory.id(),
+            "staking_pool_whitelist_account_id": whitelist.id(),
+        }))
+        .gas(Gas::from_tgas(100))
+        .transact()
+        .await
+        .context("factory init transact")?
+        .into_result()
+        .context("factory init result")?;
+
+    // Create and initialize the staking pool with the factory as predecessor so it becomes the stored factory_id.
+    let pool = root
+        .create_subaccount("upgradepool")
+        .initial_balance(NearToken::from_near(2_000))
+        .transact()
+        .await
+        .context("create pool account transact")?
+        .into_result()
+        .context("create pool account result")?;
+    let pool = pool
+        .deploy(&staking_wasm)
+        .await
+        .context("deploy old staking wasm")?
+        .into_result()
+        .context("deploy old staking result")?;
+    factory
+        .as_account()
+        .call(pool.id(), "new")
+        .args_json(json!({
+            "owner_id": owner.id(),
+            "stake_public_key": STAKING_KEY,
+            "reward_fee_fraction": { "numerator": 1, "denominator": 10 },
+            "burn_fee_fraction": { "numerator": 0, "denominator": 10 }
+        }))
+        .gas(Gas::from_tgas(300))
+        .transact()
+        .await
+        .context("init staking pool via factory transact")?
+        .into_result()
+        .context("init staking pool via factory result")?;
+
+    // Sanity-check stored factory id.
+    let stored_factory: AccountId = pool
+        .view("get_factory_id")
+        .await
+        .context("view factory id")?
+        .json()?;
+    assert_eq!(stored_factory, factory.id().clone());
+    worker
+        .patch_state(pool.id(), VERSION_KEY, LEGACY_VERSION.as_bytes())
+        .await
+        .context("patch contract version to legacy")?;
+
+    // Stake to create on-chain state that must survive the upgrade.
+    owner
+        .call(pool.id(), "deposit_and_stake")
+        .deposit(NearToken::from_near(10))
+        .gas(Gas::from_tgas(200))
+        .transact()
+        .await
+        .context("deposit_and_stake transact")?
+        .into_result()
+        .context("deposit_and_stake result")?;
+
+    let owner_shares_before: u128 = pool
+        .view("ft_balance_of")
+        .args_json(json!({ "account_id": owner.id() }))
+        .await
+        .context("view ft_balance_of before")?
+        .json::<String>()?
+        .parse()?;
+
+    // Store new staking contract code in the factory for upgrade.
+    let new_code_hash: String = factory
+        .call("store")
+        .args(staking_wasm.clone())
+        // Generously fund storage so the full WASM blob can be persisted.
+        .deposit(NearToken::from_near(100))
+        .gas(Gas::from_tgas(100))
+        .transact()
+        .await
+        .context("store new staking code transact")?
+        .json()?;
+    factory
+        .call("allow_contract")
+        .args_json(json!({ "code_hash": new_code_hash }))
+        .transact()
+        .await
+        .context("allow new code hash transact")?
+        .into_result()
+        .context("allow new code hash result")?;
+
+    // Owner triggers upgrade fetching code from the trusted factory.
+    owner
+        .call(pool.id(), "upgrade")
+        .args_json(json!({ "code_hash": new_code_hash }))
+        .max_gas()
+        .transact()
+        .await
+        .context("upgrade call transact")?
+        .into_result()
+        .context("upgrade call result")?;
+
+    // Account stake must remain intact after upgrade + migration.
+    let owner_shares_after: u128 = pool
+        .view("ft_balance_of")
+        .args_json(json!({ "account_id": owner.id() }))
+        .await
+        .context("view ft_balance_of after")?
+        .json::<String>()?
+        .parse()?;
+    assert_eq!(
+        owner_shares_after, owner_shares_before,
+        "Upgrade should preserve staked share balances"
+    );
+
+    let owner_id: AccountId = pool
+        .view("get_owner_id")
+        .await
+        .context("view owner id after")?
+        .json()?;
+    assert_eq!(owner_id, owner.id().clone());
 
     Ok(())
 }
