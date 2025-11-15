@@ -1,4 +1,6 @@
-use near_sdk::{near, assert_one_yocto, is_promise_success, promise_result_as_success, Timestamp, ext_contract};
+use near_sdk::{
+    Timestamp, assert_one_yocto, ext_contract, is_promise_success, near, promise_result_as_success,
+};
 
 use crate::stake::ext_self;
 use crate::*;
@@ -186,10 +188,9 @@ impl StakingContract {
         farm_id: u64,
         farm: &mut Farm,
     ) -> (U256, Balance) {
-        if let Some(distribution) = self.internal_calculate_distribution(
-            farm,
-            self.total_stake_shares - self.total_burn_shares,
-        ) {
+        if let Some(distribution) = self
+            .internal_calculate_distribution(farm, self.total_stake_shares - self.total_burn_shares)
+        {
             if distribution.reward_round != farm.last_distribution.reward_round {
                 farm.last_distribution = distribution.clone();
             }
@@ -210,14 +211,8 @@ impl StakingContract {
         (U256::zero(), 0)
     }
 
-    fn internal_distribute_reward(
-        &mut self,
-        account: &mut Account,
-        farm_id: u64,
-        farm: &mut Farm,
-    ) {
-        let (new_user_rps, claim_amount) =
-            self.internal_unclaimed_balance(account, farm_id, farm);
+    fn internal_distribute_reward(&mut self, account: &mut Account, farm_id: u64, farm: &mut Farm) {
+        let (new_user_rps, claim_amount) = self.internal_unclaimed_balance(account, farm_id, farm);
         if !account.is_burn_account {
             account
                 .last_farm_reward_per_share
@@ -276,15 +271,17 @@ impl StakingContract {
             .with_attached_deposit(NearToken::from_yoctonear(1))
             .with_static_gas(GAS_FOR_FT_TRANSFER)
             .ft_transfer(send_account_id.clone(), U128(amount), None)
-        .then(ext_self::ext(env::current_account_id())
-            .with_attached_deposit(NearToken::from_yoctonear(0))
-            .with_static_gas(GAS_FOR_RESOLVE_TRANSFER)
-            .callback_post_withdraw_reward(
-                token_id.clone(),
-                // Return funds to the account that was deducted from vs caller.
-                claim_account_id.clone(),
-                U128(amount),
-            ))
+            .then(
+                ext_self::ext(env::current_account_id())
+                    .with_attached_deposit(NearToken::from_yoctonear(0))
+                    .with_static_gas(GAS_FOR_RESOLVE_TRANSFER)
+                    .callback_post_withdraw_reward(
+                        token_id.clone(),
+                        // Return funds to the account that was deducted from vs caller.
+                        claim_account_id.clone(),
+                        U128(amount),
+                    ),
+            )
     }
 }
 
@@ -335,15 +332,23 @@ impl StakingContract {
         let account_id = env::predecessor_account_id();
         if let Some(delegator_id) = delegator_id {
             Promise::new(delegator_id.clone())
-                .function_call(GET_OWNER_METHOD.to_string(), vec![], NearToken::from_yoctonear(0), GAS_FOR_GET_OWNER)
-                .then(ext_self::ext(env::current_account_id())
-                    .with_attached_deposit(NearToken::from_yoctonear(0))
-                    .with_static_gas(env::prepaid_gas().saturating_sub(env::used_gas()).saturating_sub(GAS_FOR_GET_OWNER).saturating_sub(GAS_LEFTOVERS))
-                    .callback_post_get_owner(
-                        token_id,
-                        delegator_id,
-                        account_id,
-                    ))
+                .function_call(
+                    GET_OWNER_METHOD.to_string(),
+                    vec![],
+                    NearToken::from_yoctonear(0),
+                    GAS_FOR_GET_OWNER,
+                )
+                .then(
+                    ext_self::ext(env::current_account_id())
+                        .with_attached_deposit(NearToken::from_yoctonear(0))
+                        .with_static_gas(
+                            env::prepaid_gas()
+                                .saturating_sub(env::used_gas())
+                                .saturating_sub(GAS_FOR_GET_OWNER)
+                                .saturating_sub(GAS_LEFTOVERS),
+                        )
+                        .callback_post_get_owner(token_id, delegator_id, account_id),
+                )
         } else {
             self.internal_claim(&token_id, &account_id, &account_id)
         }

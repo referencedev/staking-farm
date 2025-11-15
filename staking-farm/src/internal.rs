@@ -1,8 +1,8 @@
 use crate::owner::{FACTORY_KEY, OWNER_KEY};
 use crate::stake::ext_self;
 use crate::*;
-use near_sdk::log;
 use near_sdk::NearToken;
+use near_sdk::log;
 
 /// Zero address is implicit address that doesn't have a key for it.
 /// Used for burning tokens.
@@ -24,11 +24,16 @@ impl StakingContract {
         // Stakes with the staking public key. If the public key is invalid the entire function
         // call will be rolled back.
         Promise::new(env::current_account_id())
-            .stake(NearToken::from_yoctonear(self.total_staked_balance), self.stake_public_key.clone())
-            .then(ext_self::ext(env::current_account_id())
-                .with_attached_deposit(NearToken::from_yoctonear(NO_DEPOSIT))
-                .with_static_gas(ON_STAKE_ACTION_GAS)
-                .on_stake_action());
+            .stake(
+                NearToken::from_yoctonear(self.total_staked_balance),
+                self.stake_public_key.clone(),
+            )
+            .then(
+                ext_self::ext(env::current_account_id())
+                    .with_attached_deposit(NearToken::from_yoctonear(NO_DEPOSIT))
+                    .with_static_gas(ON_STAKE_ACTION_GAS)
+                    .on_stake_action(),
+            );
     }
 
     pub(crate) fn internal_deposit(&mut self) -> u128 {
@@ -230,8 +235,9 @@ impl StakingContract {
         // NOTE: We need to subtract `attached_deposit` in case `ping` called from `deposit` call
         // since the attached deposit gets included in the `account_balance`, and we have not
         // accounted it yet.
-        let total_balance =
-            env::account_locked_balance().as_yoctonear() + env::account_balance().as_yoctonear() - env::attached_deposit().as_yoctonear();
+        let total_balance = env::account_locked_balance().as_yoctonear()
+            + env::account_balance().as_yoctonear()
+            - env::attached_deposit().as_yoctonear();
 
         assert!(
             total_balance >= self.last_total_balance,
@@ -400,4 +406,49 @@ impl StakingContract {
             .parse()
             .expect("INTERNAL_FAIL")
     }
+
+    ///
+    /// Internal methods to work with storage registration.
+    /// 
+
+    pub(crate) fn storage_registration_key(account_id: &AccountId) -> Vec<u8> {
+        let mut key = REGISTERED_ACCOUNT_PREFIX.to_vec();
+        key.extend(account_id.as_bytes());
+        key
+    }
+
+    pub(crate) fn storage_is_registered(account_id: &AccountId) -> bool {
+        env::storage_has_key(&Self::storage_registration_key(account_id))
+    }
+
+    pub(crate) fn storage_register_account(account_id: &AccountId) {
+        env::storage_write(&Self::storage_registration_key(account_id), &[]);
+    }
+
+    pub(crate) fn storage_take_registration(account_id: &AccountId) -> bool {
+        env::storage_remove(&Self::storage_registration_key(account_id))
+    }
+
+    pub(crate) fn min_storage_balance() -> NearToken {
+        let byte_cost = env::storage_byte_cost().as_yoctonear();
+        NearToken::from_yoctonear(byte_cost * ACCOUNT_STORAGE_BYTES as u128)
+    }
+
+    /// Assets that receiver either has an account entry or registered storage explicitly.
+    /// If account doesn't exist, tries to take away storage registration. Panics if neither is true.
+    /// WARNING: this method mutates the contract state around storage registration so should be used only when creating account.
+    pub(crate) fn internal_assert_receiver_storage(
+        &mut self,
+        receiver_id: &AccountId,
+        _amount_shares: Balance,
+    ) {
+        if self.accounts.get(receiver_id).is_some() {
+            return;
+        }
+        if Self::storage_take_registration(receiver_id) {
+            return;
+        }
+        env::panic_str("ERR_STORAGE_NOT_REGISTERED");
+    }
+
 }

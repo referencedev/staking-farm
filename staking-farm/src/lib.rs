@@ -1,10 +1,10 @@
-
+use near_contract_standards::fungible_token::metadata::{FT_METADATA_SPEC, FungibleTokenMetadata};
 use near_sdk::collections::{UnorderedMap, UnorderedSet, Vector};
 use near_sdk::json_types::U128;
 use near_sdk::serde::{Deserialize, Serialize};
 use near_sdk::{
-    env, near, ext_contract, near_bindgen, AccountId, BorshStorageKey, EpochHeight, Gas,
-    Promise, PromiseResult, PublicKey, PanicOnDefault, NearToken
+    AccountId, BorshStorageKey, EpochHeight, Gas, NearToken, PanicOnDefault, Promise,
+    PromiseResult, PublicKey, env, ext_contract, near, near_bindgen,
 };
 use uint::construct_uint;
 
@@ -41,6 +41,11 @@ const MAX_NUM_ACTIVE_FARMS: usize = 3;
 /// updated in the previous epoch. It will not unlock the funds for 4 epochs.
 const NUM_EPOCHS_TO_UNLOCK: EpochHeight = 4;
 
+/// Conservative estimate of bytes required to create a new `Account` entry in storage.
+/// Used to ensure incoming FT transfers of stake shares cover storage for a new receiver.
+const ACCOUNT_STORAGE_BYTES: u64 = 500;
+const REGISTERED_ACCOUNT_PREFIX: &[u8] = b"regacc";
+
 construct_uint! {
     /// 256-bit unsigned integer.
     #[near(serializers=[borsh])]
@@ -57,6 +62,7 @@ pub enum StorageKeys {
     Farms,
     AuthorizedUsers,
     AuthorizedFarmTokens,
+    RegisteredAccounts,
 }
 
 /// Tracking balance for burning.
@@ -195,6 +201,7 @@ impl StakingContract {
     ) -> Self {
         assert!(!env::state_exists(), "Already initialized");
         reward_fee_fraction.assert_valid();
+        burn_fee_fraction.assert_valid();
         assert!(
             env::is_valid_account_id(owner_id.as_bytes()),
             "The owner account ID is invalid"
@@ -238,11 +245,212 @@ impl StakingContract {
     }
 }
 
+// ----------------------
+// FT (NEP-141) interface
+// ----------------------
+
+/// Gas for calling external ft_on_transfer on receivers.
+const GAS_FOR_FT_ON_TRANSFER: Gas = Gas::from_tgas(25);
+/// Gas for resolve callback; reuse similar budget as farming resolve.
+const GAS_FOR_FT_RESOLVE: Gas = Gas::from_tgas(20);
+
+/// External interface for ft_on_transfer receivers.
+#[ext_contract(ext_ft_receiver)]
+pub trait ExtFtReceiver {
+    fn ft_on_transfer(
+        &mut self,
+        sender_id: AccountId,
+        amount: U128,
+        msg: String,
+    ) -> near_sdk::PromiseOrValue<U128>;
+}
+
+#[near_bindgen]
+impl StakingContract {
+    /// Total supply equals all shares minus burned shares.
+    pub fn ft_total_supply(&self) -> U128 {
+        U128(
+            self.total_stake_shares
+                .saturating_sub(self.total_burn_shares),
+        )
+    }
+
+    /// Balance of stake shares for a given account.
+    pub fn ft_balance_of(&self, account_id: AccountId) -> U128 {
+        if account_id.as_str() == crate::internal::ZERO_ADDRESS {
+            return U128(0);
+        }
+        let account = self.internal_get_account(&account_id);
+        U128(account.stake_shares)
+    }
+
+    /// Simple transfer of stake shares as FT.
+    #[payable]
+    pub fn ft_transfer(&mut self, receiver_id: AccountId, amount: U128) {
+        near_sdk::assert_one_yocto();
+        assert!(
+            receiver_id.as_str() != crate::internal::ZERO_ADDRESS,
+            "ERR_TRANSFER_TO_ZERO_ADDRESS"
+        );
+        let sender_id = env::predecessor_account_id();
+        let amount: Balance = amount.0;
+        assert!(amount > 0, "ERR_ZERO_AMOUNT");
+        // Ensure enough shares to cover storage if receiver is a new account entry.
+        self.internal_assert_receiver_storage(&receiver_id, amount);
+        self.internal_share_transfer(&sender_id, &receiver_id, amount);
+    }
+
+    /// Transfer stake shares with a callback to the receiver.
+    #[payable]
+    pub fn ft_transfer_call(
+        &mut self,
+        receiver_id: AccountId,
+        amount: U128,
+        msg: String,
+    ) -> Promise {
+        near_sdk::assert_one_yocto();
+        assert!(
+            receiver_id.as_str() != crate::internal::ZERO_ADDRESS,
+            "ERR_TRANSFER_TO_ZERO_ADDRESS"
+        );
+        let sender_id = env::predecessor_account_id();
+        let amount_raw: Balance = amount.0;
+        assert!(amount_raw > 0, "ERR_ZERO_AMOUNT");
+        // Ensure enough shares to cover storage if receiver is a new account entry.
+        self.internal_assert_receiver_storage(&receiver_id, amount_raw);
+
+        // Perform the transfer first.
+        self.internal_share_transfer(&sender_id, &receiver_id, amount_raw);
+
+        // Initiate receiver callback and then resolve.
+        ext_ft_receiver::ext(receiver_id.clone())
+            // Using both static gas and unused gas weight => logic that at least static gas and add unused gas weight.
+            .with_static_gas(GAS_FOR_FT_ON_TRANSFER)
+            .with_unused_gas_weight(1)
+            .ft_on_transfer(sender_id.clone(), amount, msg)
+            .then(
+                crate::stake::ext_self::ext(env::current_account_id())
+                    .with_static_gas(GAS_FOR_FT_RESOLVE)
+                    .ft_resolve_transfer(sender_id, receiver_id, amount),
+            )
+    }
+
+    /// FT metadata (NEP-148).
+    pub fn ft_metadata(&self) -> FungibleTokenMetadata {
+        FungibleTokenMetadata {
+            spec: FT_METADATA_SPEC.to_string(),
+            name: Self::internal_get_ft_name(),
+            symbol: Self::internal_get_ft_symbol(),
+            icon: None,
+            reference: None,
+            reference_hash: None,
+            decimals: 24,
+        }
+    }
+}
+
+// ------------------------------
+// Storage management (NEP-145)
+// ------------------------------
+
+use near_contract_standards::storage_management::{StorageBalance, StorageBalanceBounds};
+
+#[near_bindgen]
+impl StakingContract {
+    /// Returns the min and max storage balance bounds. Max is None for FTs.
+    pub fn storage_balance_bounds(&self) -> StorageBalanceBounds {
+        StorageBalanceBounds {
+            min: Self::min_storage_balance(),
+            max: Some(Self::min_storage_balance()),
+        }
+    }
+
+    /// Returns storage balance for account if registered.
+    pub fn storage_balance_of(&self, account_id: AccountId) -> Option<StorageBalance> {
+        if self.accounts.get(&account_id).is_none() && !Self::storage_is_registered(&account_id) {
+            return None;
+        }
+        Some(StorageBalance {
+            total: Self::min_storage_balance(),
+            available: NearToken::from_yoctonear(0),
+        })
+    }
+
+    /// Register an account for receiving stake shares. Excess deposit is refunded.
+    #[payable]
+    pub fn storage_deposit(
+        &mut self,
+        account_id: Option<AccountId>,
+        _registration_only: Option<bool>,
+    ) -> StorageBalance {
+        let account_id = account_id.unwrap_or_else(|| env::predecessor_account_id());
+        let deposit = env::attached_deposit();
+        let min_balance = Self::min_storage_balance();
+        let mut refund = deposit.as_yoctonear();
+        if self.accounts.get(&account_id).is_none() && !Self::storage_is_registered(&account_id) {
+            assert!(
+                deposit.as_yoctonear() >= min_balance.as_yoctonear(),
+                "ERR_INSUFFICIENT_STORAGE_DEPOSIT"
+            );
+            Self::storage_register_account(&account_id);
+            refund -= min_balance.as_yoctonear();
+        }
+        if refund > 0 {
+            Promise::new(env::predecessor_account_id()).transfer(NearToken::from_yoctonear(refund));
+        }
+        StorageBalance {
+            total: min_balance,
+            available: NearToken::from_yoctonear(0),
+        }
+    }
+
+    /// Withdraw storage deposit when the balance of the user is 0.
+    #[payable]
+    pub fn storage_withdraw(&mut self, amount: Option<U128>) -> StorageBalance {
+        near_sdk::assert_one_yocto();
+        let account_id = env::predecessor_account_id();
+        let min = Self::min_storage_balance();
+        if self.accounts.get(&account_id).is_some() {
+            env::panic_str("ERR_STORAGE_IN_USE");
+        }
+        if !Self::storage_is_registered(&account_id) {
+            return StorageBalance {
+                total: NearToken::from_yoctonear(0),
+                available: NearToken::from_yoctonear(0),
+            };
+        }
+        if let Some(amount) = amount {
+            assert_eq!(
+                amount.0,
+                min.as_yoctonear(),
+                "ERR_WITHDRAW_INCORRECT_AMOUNT"
+            );
+        }
+        Self::storage_take_registration(&account_id);
+        Promise::new(account_id.clone()).transfer(min);
+        StorageBalance {
+            total: NearToken::from_yoctonear(0),
+            available: NearToken::from_yoctonear(0),
+        }
+    }
+}
+
+#[cfg(test)]
+impl StakingContract {
+    pub(crate) fn test_register_account(&mut self, account_id: &AccountId) {
+        Self::storage_register_account(account_id);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use near_contract_standards::fungible_token::receiver::FungibleTokenReceiver;
     use near_sdk::json_types::U64;
     use near_sdk::serde_json::json;
+    use near_sdk::test_utils::VMContextBuilder;
+    #[allow(deprecated)]
+    use near_sdk::test_utils::testing_env_with_promise_results;
+    use near_sdk::{NearToken, PromiseResult, testing_env};
 
     use crate::test_utils::tests::*;
     use crate::test_utils::*;
@@ -389,14 +597,18 @@ mod tests {
         assert_eq_in_near!(acc.staked_balance.0, deposit_amount / 2 + ntoy(10));
         assert!(!acc.can_withdraw);
 
-        assert!(!emulator
-            .contract
-            .is_account_unstaked_balance_available(bob()),);
+        assert!(
+            !emulator
+                .contract
+                .is_account_unstaked_balance_available(bob()),
+        );
         emulator.skip_epochs(4);
         emulator.update_context(bob(), 0);
-        assert!(emulator
-            .contract
-            .is_account_unstaked_balance_available(bob()),);
+        assert!(
+            emulator
+                .contract
+                .is_account_unstaked_balance_available(bob()),
+        );
     }
 
     #[test]
@@ -734,5 +946,343 @@ mod tests {
             .contract
             .update_reward_fee_fraction(new_fee2.clone());
         assert_eq!(emulator.contract.get_reward_fee_fraction(), new_fee);
+    }
+
+    #[test]
+    fn test_ft_metadata_defaults_and_update() {
+        // By default, name = full account id; symbol = prefix before first dot of account id.
+        let mut emulator = Emulator::new(
+            owner(),
+            "KuTCtARNzxZQ3YvXDeLjx83FDqxv2SdQTSbiq876zR7"
+                .parse()
+                .unwrap(),
+            zero_fee(),
+        );
+
+        // For tests, current_account_id is set to test_utils::staking() when updating context.
+        // Ensure context reflects the contract account before calling view method.
+        emulator.update_context(staking(), 0);
+        let md = emulator.contract.ft_metadata();
+        // Defaults: name = full contract id; symbol = UPPERCASE prefix ("STAKING")
+        assert_eq!(md.name, staking().to_string());
+        assert_eq!(md.symbol, "STAKING".to_string());
+        assert_eq!(md.decimals, 24);
+
+        // Owner updates
+        emulator.update_context(owner(), 0);
+        emulator.contract.set_ft_name("My Pool Share".to_string());
+        emulator.contract.set_ft_symbol("MPS".to_string());
+
+        // Read back updated metadata
+        emulator.update_context(staking(), 0);
+        let md2 = emulator.contract.ft_metadata();
+        assert_eq!(md2.name, "My Pool Share");
+        assert_eq!(md2.symbol, "MPS");
+        assert_eq!(md2.decimals, 24);
+    }
+
+    #[test]
+    fn test_ft_share_transfer() {
+        let mut emulator = Emulator::new(
+            owner(),
+            "KuTCtARNzxZQ3YvXDeLjx83FDqxv2SdQTSbiq876zR7"
+                .parse()
+                .unwrap(),
+            zero_fee(),
+        );
+
+        // Bob stakes some NEAR to get shares.
+        emulator.deposit_and_stake(bob(), ntoy(1_000_000));
+
+        // Register Charlie for receiving shares.
+        emulator.update_context(charlie(), ntoy(1));
+        let _sb = emulator.contract.storage_deposit(Some(charlie()), None);
+
+        // Check Bob's share balance and transfer half to Charlie.
+        let bob_shares = emulator.contract.ft_balance_of(bob()).0;
+        assert!(bob_shares > 0);
+        let half = U128(bob_shares / 2);
+
+        // Need 1 yoctoNEAR to call ft_transfer
+        emulator.update_context(bob(), 1);
+        emulator.contract.ft_transfer(charlie(), half);
+
+        // Balances updated: Bob decreased, Charlie increased, total preserved (excluding burn).
+        let bob_after = emulator.contract.ft_balance_of(bob()).0;
+        let charlie_after = emulator.contract.ft_balance_of(charlie()).0;
+
+        assert_eq!(bob_after, bob_shares - half.0);
+        assert_eq!(charlie_after, half.0);
+        assert_eq!(bob_after + charlie_after, bob_shares);
+    }
+
+    #[test]
+    #[should_panic(expected = "ERR_ZERO_AMOUNT")]
+    fn test_ft_transfer_zero_amount_should_panic() {
+        let mut emulator = Emulator::new(
+            owner(),
+            "KuTCtARNzxZQ3YvXDeLjx83FDqxv2SdQTSbiq876zR7"
+                .parse()
+                .unwrap(),
+            zero_fee(),
+        );
+
+        // Bob stakes to have an account entry
+        emulator.deposit_and_stake(bob(), ntoy(1));
+        emulator.contract.test_register_account(&charlie());
+
+        emulator.update_context(bob(), 1);
+        emulator.contract.ft_transfer(charlie(), U128(0)); // should panic ERR_ZERO_AMOUNT
+    }
+
+    #[test]
+    #[should_panic(expected = "ERR_SAME_ACCOUNT")]
+    fn test_ft_transfer_same_account_should_panic() {
+        let mut emulator = Emulator::new(
+            owner(),
+            "KuTCtARNzxZQ3YvXDeLjx83FDqxv2SdQTSbiq876zR7"
+                .parse()
+                .unwrap(),
+            zero_fee(),
+        );
+        // stake some to have shares
+        emulator.deposit_and_stake(bob(), ntoy(10));
+
+        // Try to transfer to self
+        let amount = U128(ntoy(1));
+        emulator.update_context(bob(), 1);
+        emulator.contract.ft_transfer(bob(), amount); // should panic ERR_SAME_ACCOUNT
+    }
+
+    #[test]
+    #[should_panic(expected = "ERR_TRANSFER_TO_ZERO_ADDRESS")]
+    fn test_ft_transfer_to_zero_address_should_panic() {
+        let mut emulator = Emulator::new(
+            owner(),
+            "KuTCtARNzxZQ3YvXDeLjx83FDqxv2SdQTSbiq876zR7"
+                .parse()
+                .unwrap(),
+            zero_fee(),
+        );
+        emulator.deposit_and_stake(bob(), ntoy(5));
+
+        let zero_id: AccountId = crate::internal::ZERO_ADDRESS.parse().unwrap();
+        emulator.update_context(bob(), 1);
+        emulator.contract.ft_transfer(zero_id, U128(ntoy(1))); // should panic ERR_TRANSFER_TO_ZERO_ADDRESS
+    }
+
+    #[test]
+    #[should_panic(expected = "ERR_INSUFFICIENT_SHARES")]
+    fn test_ft_transfer_insufficient_shares_should_panic() {
+        let mut emulator = Emulator::new(
+            owner(),
+            "KuTCtARNzxZQ3YvXDeLjx83FDqxv2SdQTSbiq876zR7"
+                .parse()
+                .unwrap(),
+            zero_fee(),
+        );
+
+        // Bob stakes 1 yocto, tries to transfer more
+        emulator.deposit_and_stake(bob(), ntoy(1));
+        emulator.contract.test_register_account(&charlie());
+
+        emulator.update_context(bob(), 1);
+        emulator.contract.ft_transfer(charlie(), U128(ntoy(2))); // should panic ERR_INSUFFICIENT_SHARES
+    }
+
+    #[test]
+    #[should_panic(expected = "ERR_STORAGE_NOT_REGISTERED")]
+    fn test_ft_transfer_requires_storage_registration() {
+        let mut emulator = Emulator::new(
+            owner(),
+            "KuTCtARNzxZQ3YvXDeLjx83FDqxv2SdQTSbiq876zR7"
+                .parse()
+                .unwrap(),
+            zero_fee(),
+        );
+        emulator.deposit_and_stake(bob(), ntoy(10));
+        emulator.update_context(bob(), 1);
+        emulator.contract.ft_transfer(charlie(), U128(ntoy(1)));
+    }
+
+    #[test]
+    fn test_ft_resolve_transfer_refunds_unused_shares() {
+        let mut emulator = Emulator::new(
+            owner(),
+            "KuTCtARNzxZQ3YvXDeLjx83FDqxv2SdQTSbiq876zR7"
+                .parse()
+                .unwrap(),
+            zero_fee(),
+        );
+        emulator.deposit_and_stake(bob(), ntoy(1_000));
+        emulator.contract.test_register_account(&charlie());
+
+        let transfer_amount = ntoy(100);
+        let bob_before = emulator.contract.ft_balance_of(bob()).0;
+
+        emulator.update_context(bob(), 1);
+        emulator
+            .contract
+            .ft_transfer(charlie(), U128(transfer_amount));
+
+        let bob_after_transfer = emulator.contract.ft_balance_of(bob()).0;
+        let charlie_after_transfer = emulator.contract.ft_balance_of(charlie()).0;
+        assert_eq!(bob_after_transfer, bob_before - transfer_amount);
+        assert_eq!(charlie_after_transfer, transfer_amount);
+
+        let unused = transfer_amount / 2;
+        let callback_context = VMContextBuilder::new()
+            .current_account_id(staking())
+            .predecessor_account_id(staking())
+            .signer_account_id(staking())
+            .attached_deposit(NearToken::from_yoctonear(0))
+            .account_balance(NearToken::from_yoctonear(emulator.amount))
+            .account_locked_balance(NearToken::from_yoctonear(emulator.locked_amount))
+            .epoch_height(emulator.epoch_height)
+            .block_height(emulator.block_index)
+            .block_timestamp(emulator.block_timestamp)
+            .build();
+        #[allow(deprecated)]
+        testing_env_with_promise_results(
+            callback_context,
+            PromiseResult::Successful(near_sdk::serde_json::to_vec(&U128(unused)).unwrap()),
+        );
+
+        let refund = emulator
+            .contract
+            .ft_resolve_transfer(bob(), charlie(), U128(transfer_amount));
+        assert_eq!(refund.0, unused);
+
+        let bob_after_refund = emulator.contract.ft_balance_of(bob()).0;
+        let charlie_after_refund = emulator.contract.ft_balance_of(charlie()).0;
+        assert_eq!(bob_after_refund, bob_after_transfer + unused);
+        assert_eq!(charlie_after_refund, charlie_after_transfer - unused);
+    }
+
+    #[test]
+    #[should_panic(expected = "Denominator must be a positive number")]
+    fn test_new_panics_for_invalid_burn_fee_denominator() {
+        let context = VMContextBuilder::new()
+            .current_account_id(staking())
+            .predecessor_account_id(owner())
+            .signer_account_id(owner())
+            .account_balance(NearToken::from_yoctonear(ntoy(1_000)))
+            .build();
+        testing_env!(context);
+        StakingContract::new(
+            owner(),
+            "KuTCtARNzxZQ3YvXDeLjx83FDqxv2SdQTSbiq876zR7"
+                .parse()
+                .unwrap(),
+            zero_fee(),
+            Ratio {
+                numerator: 1,
+                denominator: 0,
+            },
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "The reward fee must be less or equal to 1")]
+    fn test_new_panics_for_burn_fee_greater_than_one() {
+        let context = VMContextBuilder::new()
+            .current_account_id(staking())
+            .predecessor_account_id(owner())
+            .signer_account_id(owner())
+            .account_balance(NearToken::from_yoctonear(ntoy(1_000)))
+            .build();
+        testing_env!(context);
+        StakingContract::new(
+            owner(),
+            "KuTCtARNzxZQ3YvXDeLjx83FDqxv2SdQTSbiq876zR7"
+                .parse()
+                .unwrap(),
+            zero_fee(),
+            Ratio {
+                numerator: 2,
+                denominator: 1,
+            },
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "ERR_TOO_MANY_ACTIVE_FARMS")]
+    fn test_active_farm_cap_enforced() {
+        let mut emulator = Emulator::new(
+            owner(),
+            "KuTCtARNzxZQ3YvXDeLjx83FDqxv2SdQTSbiq876zR7"
+                .parse()
+                .unwrap(),
+            zero_fee(),
+        );
+        emulator.update_context(owner(), 0);
+        emulator.contract.add_authorized_farm_token(&bob());
+
+        for i in 0..MAX_NUM_ACTIVE_FARMS {
+            emulator.update_context(bob(), 0);
+            emulator.contract.ft_on_transfer(
+                owner(),
+                U128(ntoy(100)),
+                json!({
+                    "name": format!("farm-{i}"),
+                    "start_date": U64(0),
+                    "end_date": U64(ONE_EPOCH_TS * 4),
+                })
+                .to_string(),
+            );
+        }
+
+        emulator.update_context(bob(), 0);
+        emulator.contract.ft_on_transfer(
+            owner(),
+            U128(ntoy(100)),
+            json!({
+                "name": "overflow",
+                "start_date": U64(0),
+                "end_date": U64(ONE_EPOCH_TS * 4),
+            })
+            .to_string(),
+        );
+    }
+
+    #[test]
+    fn test_storage_deposit_and_withdraw() {
+        let mut emulator = Emulator::new(
+            owner(),
+            "KuTCtARNzxZQ3YvXDeLjx83FDqxv2SdQTSbiq876zR7"
+                .parse()
+                .unwrap(),
+            zero_fee(),
+        );
+        let min = emulator.contract.storage_balance_bounds().min;
+
+        emulator.update_context(charlie(), min.as_yoctonear() + ntoy(1));
+        let sb = emulator.contract.storage_deposit(Some(charlie()), None);
+        assert_eq!(sb.total, min);
+        assert!(emulator.contract.storage_balance_of(charlie()).is_some());
+
+        emulator.update_context(charlie(), 1);
+        let sb = emulator.contract.storage_withdraw(None);
+        assert_eq!(sb.total.as_yoctonear(), 0);
+        assert!(emulator.contract.storage_balance_of(charlie()).is_none());
+    }
+
+    #[test]
+    #[should_panic(expected = "ERR_STORAGE_IN_USE")]
+    fn test_storage_withdraw_fails_when_account_active() {
+        let mut emulator = Emulator::new(
+            owner(),
+            "KuTCtARNzxZQ3YvXDeLjx83FDqxv2SdQTSbiq876zR7"
+                .parse()
+                .unwrap(),
+            zero_fee(),
+        );
+        let min = emulator.contract.storage_balance_bounds().min;
+        emulator.update_context(charlie(), min.as_yoctonear() + ntoy(1));
+        emulator.contract.storage_deposit(Some(charlie()), None);
+        emulator.deposit_and_stake(charlie(), ntoy(10));
+
+        emulator.update_context(charlie(), 1);
+        emulator.contract.storage_withdraw(None);
     }
 }

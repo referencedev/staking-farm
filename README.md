@@ -49,3 +49,59 @@ This is done because transferring immediately rewards to `ZERO_ADDRESS` is impos
 Anyone can call `unstake_burn` and `burn`, similarly how anyone can call `ping` on the staking pool to kick the calculations.
 
 TODO: the imporvement to this method, would be to unstake that amount direclty on `ping` and just let it be burnt via the subsequent `burn` call.
+
+## Stake shares as Fungible Token (NEP-141)
+
+This contract exposes staked shares as a standard NEAR FT (NEP-141), so users can transfer their staking position to other accounts.
+
+- Token metadata (NEP-148):
+		- name: defaults to the full account ID of this contract (e.g. `staking.pool.near`)
+		- symbol: defaults to the prefix of the contract account ID before the first dot (e.g. `staking`)
+		- decimals: 24
+
+	The owner can update these values at any time without a state migration, since they’re stored outside of contract STATE:
+
+	- set name: `set_ft_name(name: String)`
+	- set symbol: `set_ft_symbol(symbol: String)`
+
+	Notes:
+	- Changing metadata doesn’t affect token balances or supply.
+	- Defaults are used unless explicitly overwritten by the owner.
+
+### Storage (NEP-145)
+
+Explicit storage registration is required when transferring to the new user who hasn't staked with given contract. 
+
+The storage interface is provided for compatibility with wallets/dapps:
+
+- `storage_balance_bounds` returns amount required to cover Account storage
+- `storage_balance_of` returns either amount for registered storage or 0
+- `storage_deposit` records storage payment but doesn't create Account
+- `storage_withdraw` refunds storage if Account doesn't exist anymore
+
+### Transfer shares
+
+Transfer a specific number of shares (requires 1 yoctoNEAR):
+
+```bash
+near call <pool_id> ft_transfer '{"receiver_id": "<receiver_id>", "amount": "<yocto_shares>"}' --accountId <sender_id> --amount 0.000000000000000000000001
+```
+
+Use `ft_transfer_call` to send shares to a contract that implements `ft_on_transfer`:
+
+```bash
+near call <pool_id> ft_transfer_call '{"receiver_id": "<contract_id>", "amount": "<yocto_shares>", "msg": "<json>"}' --accountId <sender_id> --amount 0.000000000000000000000001 --gas 30000000000000
+```
+
+The receiver can return a numeric string for the number of shares it wants to refund. Any unused shares will be returned to the sender via `ft_resolve_transfer`.
+
+### Supply and balances
+
+- `ft_total_supply` equals all minted stake shares minus burned shares held by the implicit burn account.
+- `ft_balance_of(account_id)` returns the account’s current stake share balance.
+- Transfers to the burn account are blocked; burning continues to work via the existing burn flow.
+
+### Notes
+
+- Moving shares moves the right to future staking rewards and farm distributions. Before moving shares, the contract distributes pending farm rewards to both sender and receiver at their current share balances to keep accounting correct.
+- You still use the staking methods (`deposit`, `stake`, `unstake`, `withdraw`) for NEAR; FT only represents the transferable share units.

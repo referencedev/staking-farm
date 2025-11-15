@@ -51,7 +51,7 @@ macro_rules! assert_eq_in_near {
 #[cfg(test)]
 pub mod tests {
     use near_sdk::test_utils::VMContextBuilder;
-    use near_sdk::{testing_env, VMContext, NearToken};
+    use near_sdk::{NearToken, VMContext, testing_env};
 
     use crate::*;
 
@@ -95,7 +95,7 @@ pub mod tests {
                 reward_fee_fraction,
                 Ratio {
                     numerator: 0,
-                    denominator: 0,
+                    denominator: 1,
                 },
             );
             let last_total_staked_balance = contract.total_staked_balance;

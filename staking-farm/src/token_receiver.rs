@@ -1,5 +1,5 @@
-use near_sdk::json_types::{U128, U64};
-use near_sdk::{env, serde_json, PromiseOrValue};
+use near_sdk::json_types::{U64, U128};
+use near_sdk::{PromiseOrValue, env, serde_json};
 
 use near_contract_standards::fungible_token::receiver::FungibleTokenReceiver;
 
@@ -53,7 +53,7 @@ impl FungibleTokenReceiver for StakingContract {
             );
         } else {
             assert!(
-                self.active_farms.len() <= MAX_NUM_ACTIVE_FARMS,
+                self.active_farms.len() < MAX_NUM_ACTIVE_FARMS,
                 "ERR_TOO_MANY_ACTIVE_FARMS"
             );
             self.internal_deposit_farm_tokens(
