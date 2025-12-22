@@ -2,6 +2,7 @@
 name = "staking-farm"
 version = "1.2.0"
 authors = ["referencedev <goi65io3903d@protonmail.com>"]
+license.workspace = true
 edition = "2024"
 publish = false
 
